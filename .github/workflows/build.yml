@@ -1,0 +1,86 @@
+# Neon Tide CI: tests on every push + hourly health check, native builds on push.
+name: build
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'        # hourly health check (tests + headless smoke)
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --no-audit --no-fund acorn
+      - run: node manager.js --test
+
+  windows:
+    needs: test
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/setup.js
+      - run: npx electron-builder --publish never --win --x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-tide-windows
+          path: |
+            dist/*.exe
+            dist/*.7z
+
+  linux:
+    needs: test
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/setup.js
+      - run: npx electron-builder --publish never --linux --x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-tide-linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.tar.xz
+
+  android:
+    needs: test
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/setup.js
+      - run: npx cap add android && npx cap sync android
+      - run: cd android && ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-tide-android
+          path: android/app/build/outputs/apk/debug/*.apk
+
+  release:
+    needs: [windows, linux, android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/**/*

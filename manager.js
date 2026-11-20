@@ -22,7 +22,8 @@ var zlib = require('zlib');
 var cp = require('child_process');
 
 var ROOT = __dirname;
-var GAME = path.join(ROOT, 'index.html');
+var GAME = path.join(ROOT, 'app', 'index.html');   // generated from src/ by scripts/bundle.js
+var bundle = require('./scripts/bundle.js');
 var DIST = path.join(ROOT, 'dist');
 var args = process.argv.slice(2);
 
@@ -31,7 +32,7 @@ function ok(msg) { console.log('\x1b[32m  PASS\x1b[0m ' + msg); }
 function bad(msg) { console.log('\x1b[31m  FAIL\x1b[0m ' + msg); }
 function arg(name) { for (var i = 0; i < args.length; i++) { if (args[i].indexOf('--' + name + '=') === 0) { return args[i].split('=')[1]; } } return null; }
 
-function readGame() { return fs.readFileSync(GAME, 'utf8'); }
+function readGame() { bundle(); return fs.readFileSync(GAME, 'utf8'); }
 function extractScript(html) {
   var m = html.match(/<script>([\s\S]*?)<\/script>/);
   if (!m) { throw new Error('No inline <script> found in index.html'); }
@@ -206,9 +207,11 @@ function serve(port) {
   function check() {
     var errs = es5Check(extractScript(readGame()));
     if (errs.length) { log('HOT', 'Change REJECTED - devices keep the last good build:'); errs.forEach(function (e) { bad(e); }); return; }
-    version++; log('HOT', 'index.html changed -> v' + version + ' pushed to ' + Object.keys(clients).length + ' device(s)');
+    version++; log('HOT', 'src/ changed -> v' + version + ' pushed to ' + Object.keys(clients).length + ' device(s)');
   }
-  fs.watch(GAME, function () { clearTimeout(timer); timer = setTimeout(check, 120); });
+  /* watch the modular sources; every save re-bundles and pushes */
+  var kick = function () { clearTimeout(timer); timer = setTimeout(check, 120); };
+  fs.watch(path.join(ROOT, 'src'), kick); fs.watch(path.join(ROOT, 'src', 'engine'), kick);
   http.createServer(function (req, res) {
     var url = req.url.split('?')[0];
     var ip = req.socket.remoteAddress;
@@ -226,7 +229,7 @@ function serve(port) {
     log('HOT', 'Dev server on port ' + port + '. Open on any device in your network:');
     console.log('    http://localhost:' + port + '/');
     lanAddresses().forEach(function (a) { console.log('    http://' + a + ':' + port + '/'); });
-    log('HOT', 'Watching index.html - save to reload every connected rig.');
+    log('HOT', 'Watching src/ - save to reload every connected rig.');
   });
 }
 
@@ -261,7 +264,7 @@ function build() {
   if (!runTests()) { log('BUILD', 'Aborted: fix the failures above first.'); process.exit(1); }
 
   log('BUILD', 'Step 2/5: clear previous output and caches');
-  rmrf(DIST); rmrf(path.join(ROOT, 'www')); rmrf(path.join(ROOT, 'build'));
+  rmrf(DIST); rmrf(path.join(ROOT, 'www')); rmrf(path.join(ROOT, 'build')); bundle();
   rmrf(path.join(ROOT, 'node_modules', '.cache')); mkdirp(DIST);
 
   log('BUILD', 'Step 3/5: compress web bundle');

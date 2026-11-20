@@ -12,7 +12,7 @@
     "serve": "node manager.js --serve 8080",
     "setup": "node scripts/setup.js",
     "build": "node manager.js --build",
-    "build:win": "electron-builder --publish never --win --x64 --ia32",
+    "build:win": "electron-builder --publish never --win",
     "build:win7": "electron-builder --publish never --win --x64 --ia32 -c.electronVersion=22.3.27 -c.directories.output=dist/win7",
     "build:mac": "electron-builder --publish never --mac --universal",
     "build:linux": "electron-builder --publish never --linux --x64 --arm64",
@@ -35,24 +35,66 @@
   "build": {
     "appId": "com.neontide.palmetto",
     "productName": "Neon Tide",
-    "files": ["index.html", "electron/**"],
-    "directories": { "output": "dist" },
+    "files": [
+      "app/index.html",
+      "electron/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64", "ia32"] },
-        { "target": "portable", "arch": ["x64", "ia32"] }
-      ]
+        {
+          "target": "7z",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
     },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
     "mac": {
       "category": "public.app-category.action-games",
-      "target": [{ "target": "dmg", "arch": ["universal"] }]
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ]
     },
-    "dmg": { "title": "Neon Tide" },
+    "dmg": {
+      "title": "Neon Tide"
+    },
     "linux": {
       "category": "Game",
-      "target": ["AppImage", "deb", "tar.gz"]
-    }
+      "target": [
+        "tar.xz",
+        "AppImage",
+        "deb"
+      ]
+    },
+    "electronLanguages": [
+      "en-US"
+    ],
+    "compression": "maximum"
   }
 }

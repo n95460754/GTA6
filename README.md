@@ -1,8 +1,26 @@
 # NEON TIDE: Palmetto County
 
-Original neon open-world crime sandbox in **one file** (`index.html`): strict ES5, Canvas 2D only, no assets, no libraries.
+Original neon open-world crime sandbox: strict ES5, Canvas 2D only, no assets, no libraries. Native apps for **Windows, Linux and Android**.
 
-**Play:** open `index.html` in any browser. Dev: `node manager.js --serve` → open the printed LAN URL on phones / test rigs.
+## Download & play
+| Platform | File (in [`releases/`](releases/)) | How |
+|---|---|---|
+| Windows 10/11 x64 | `NeonTide-windows-x64.7z` | unpack with 7-Zip, run `Neon Tide.exe` |
+| Linux x64 | `NeonTide-linux-x64.tar.xz` | `tar -xJf NeonTide-linux-x64.tar.xz` then run `neon-tide` |
+| Android 7+ | `NeonTide-android.apk` | copy to phone, allow "install unknown apps", install |
+
+GitHub Actions (`.github/workflows/build.yml`) rebuilds `.exe` installer, AppImage/deb and APK on every push and runs the test suite every hour.
+
+## Source layout
+```
+src/shell.html          page shell (canvas, CSS)
+src/engine/00..22-*.js  engine modules (platform, world, cars, AI, police, combat, renderer, HUD, phone...)
+src/engine/ORDER        module order
+scripts/bundle.js       bundles src/ -> app/index.html (generated, loaded by every native host)
+electron/main.js        Windows / Linux / macOS host
+capacitor.config.json   Android host (Capacitor)   cordova/  alt Android host   legacy-android/  API-1 WebView
+manager.js              tests, hot-reload server, build router
+```
 
 ## Controls
 | Keyboard | Touch |

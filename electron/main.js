@@ -21,7 +21,7 @@ function createWindow() {
     backgroundColor: '#0a0014', autoHideMenuBar: true, title: 'Neon Tide',
     webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
   });
-  win.loadFile(path.join(__dirname, '..', 'index.html'), { query: legacy ? { soft: '1' } : {} });
+  win.loadFile(path.join(__dirname, '..', 'app', 'index.html'), { query: legacy ? { soft: '1' } : {} });
   win.webContents.on('before-input-event', function (e, input) {
     if (input.type === 'keyDown' && input.key === 'F11') { win.setFullScreen(!win.isFullScreen()); e.preventDefault(); }
   });

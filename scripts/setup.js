@@ -7,7 +7,8 @@
 'use strict';
 var fs = require('fs'), path = require('path');
 var ROOT = path.join(__dirname, '..');
-var html = fs.readFileSync(path.join(ROOT, 'index.html'));
+require('./bundle.js')();
+var html = fs.readFileSync(path.join(ROOT, 'app', 'index.html'));
 function put(rel, data) { var p = path.join(ROOT, rel); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, data); console.log('  wrote ' + rel); }
 
 put('www/index.html', html);

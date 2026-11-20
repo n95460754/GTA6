@@ -77,13 +77,17 @@ node manager.js --build --only=win,linux
 
 - **Tests:** ✅ 15 passed, 0 failed
 - **Engine:** 25 modules, 2293 lines of strict ES5
-- **Updated:** 2026-11-20 22:04 UTC
+- **Updated:** 2026-11-20 22:11 UTC
 
 ### Release files
 | File | Size |
 |---|---|
-| [`NeonTide-linux-x64.tar.xz`](releases/NeonTide-linux-x64.tar.xz) | 65.0 MB |
-| [`NeonTide-windows-x64.7z`](releases/NeonTide-windows-x64.7z) | 64.2 MB |
+| [`NeonTide-android.apk`](releases/NeonTide-android.apk) | 3.7 MB |
+| [`NeonTide-linux-amd64.deb`](releases/NeonTide-linux-amd64.deb) | 65.9 MB |
+| [`NeonTide-linux-x64.tar.xz`](releases/NeonTide-linux-x64.tar.xz) | 65.6 MB |
+| [`NeonTide-web-PS4-PS5.html`](releases/NeonTide-web-PS4-PS5.html) | 0.1 MB |
+| [`NeonTide-windows-x64.7z`](releases/NeonTide-windows-x64.7z) | 64.8 MB |
+| [`NeonTide-windowsXP-nwjs-app.zip`](releases/NeonTide-windowsXP-nwjs-app.zip) | 0.0 MB |
 
 ### Cheat codes
 `MEDSUPPLY` full health & armor · `HEAVYMETAL` battle tank delivered · `TOOLBOX` pistol + micro smg + rpg, max ammo · `NITROUS` turbo: accel x3, top speed x4 · `BLANKSLATE` wanted level cleared · `MAXHEAT` five star fugitive · `LOWGRAVITY` gravity x0.15 · `MONEYRAIN` +$250,000

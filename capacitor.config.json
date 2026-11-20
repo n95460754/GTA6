@@ -1,0 +1,10 @@
+{
+  "appId": "com.neontide.palmetto",
+  "appName": "Neon Tide",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0a0014",
+    "webContentsDebuggingEnabled": true
+  }
+}

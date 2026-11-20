@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+www/
+android/
+cordova/www/
+cordova/platforms/
+cordova/plugins/
+legacy-android/assets/

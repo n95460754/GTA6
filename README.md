@@ -8,6 +8,25 @@ Original neon open-world crime sandbox: strict ES5, Canvas 2D only, no assets, n
 | Windows 10/11 x64 | `NeonTide-windows-x64.7z` | unpack with 7-Zip, run `Neon Tide.exe` |
 | Linux x64 | `NeonTide-linux-x64.tar.xz` | `tar -xJf NeonTide-linux-x64.tar.xz` then run `neon-tide` |
 | Android 7+ | `NeonTide-android.apk` | copy to phone, allow "install unknown apps", install |
+| Linux (Debian/Ubuntu) | `NeonTide-linux-amd64.deb` | `sudo apt install ./NeonTide-linux-amd64.deb` |
+| PS4 / PS5 / any browser | GitHub Pages link or `NeonTide-web-PS4-PS5.html` | see below |
+| Windows XP | `NeonTide-windowsXP-nwjs-app.zip` | unzip next to `nw.exe` of NW.js 0.14.7 (ia32) |
+
+### PS4 / PS5
+Sony only allows native `.pkg` games built with its licensed SDK on a devkit, so a native console build is not possible here.
+The consoles' built-in web browser runs the game with full DualShock 4 / DualSense support:
+1. In the repo: **Settings → Pages → Source: GitHub Actions** (one time). The `pages` workflow publishes the game.
+2. On the console, open the browser (PS5: send yourself the link in a PlayStation message and open it; PS4: Internet Browser app) and go to `https://<user>.github.io/GTA6/`.
+
+| Controller | Action |
+|---|---|
+| Left stick / D-pad | move / steer (D-pad picks phone apps) |
+| R2 / L2 | gas & fire / brake & reverse |
+| R1 | fire (drive-by) · Right stick: aim / tank turret |
+| Triangle | enter / exit vehicle |
+| Cross | handbrake / sprint · Circle: back |
+| Square | switch Rosa ↔ Dex · L1 (hold): weapon wheel |
+| OPTIONS | phone · SHARE/CREATE: graphics pipe |
 
 GitHub Actions (`.github/workflows/build.yml`) rebuilds `.exe` installer, AppImage/deb and APK on every push and runs the test suite every hour.
 

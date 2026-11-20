@@ -34,7 +34,7 @@ function boot() {
   for (i = 0; i < 18; i++) { spawnTraffic(true); }
   for (i = 0; i < 20; i++) { var s = sidewalkPoint(); peds.push(new Ped(s.x, s.y)); }
   /* a parked getaway car next to the safehouse */
-  var gc = new Car('sport', LOC.home.x + 20, LOC.home.y - 40, 0); gc.ai = 'none'; cars.push(gc);
+  var gc = new Car('sport', LOC.home.x + 20, LOC.home.y - 40, -PI / 2); gc.ai = 'none'; cars.push(gc);
   player.x = LOC.home.x - 20; player.y = LOC.home.y;
   cam.x = player.x; cam.y = player.y;
   resize();

@@ -131,7 +131,7 @@ function drawHUD() {
   /* --- intro controls hint --- */
   if (G.hintT > 0 && !G.phone) {
     font(11 * u, false);
-    var hint = usingTouch ? 'D-PAD move | GAS/BRK drive | ENTER car | FIRE | WPN wheel | PHONE | 3x tap top-left = cheats'
+    var hint = pad.on ? 'L-stick move/steer | R2 gas/fire | L2 brake | R1 fire | TRIANGLE car | L1 wheel | OPTIONS phone | SQUARE switch' : usingTouch ? 'D-PAD move | GAS/BRK drive | ENTER car | FIRE | WPN wheel | PHONE | 3x tap top-left = cheats'
       : 'WASD/Arrows move | E enter car | Click/J fire | Q wheel | P phone | C switch | G graphics | ~ console';
     var hl = wrapLines(hint, VW - 40 * u);
     for (i = 0; i < hl.length; i++) { text(hl[i], VW / 2, VH * 0.62 + i * 14 * u, '#e0d0ff', 'center'); }

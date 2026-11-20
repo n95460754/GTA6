@@ -15,7 +15,7 @@ function readInput() {
     I.up = I.up || ts.up || ts.gas; I.down = I.down || ts.down || ts.brake; I.left = I.left || ts.left; I.right = I.right || ts.right;
     I.fire = I.fire || ts.fire; I.fireHit = I.fireHit || ts.fireHit; I.hb = I.hb || (ts.brake && ts.gas);
   }
-  return I;
+  return applyGamepad(I);
 }
 function handleHotkeys() {
   if (keysHit[81]) { if (G.wheel) { selectWeapon(G.wheelSel); G.wheel = false; } else { G.wheel = true; G.wheelSel = player.weap; } }
@@ -34,17 +34,19 @@ function updatePlayer(dt, I) {
   if (player.fireCd > 0) { player.fireCd -= dt; }
   if (player.punchT > 0) { player.punchT -= dt; }
   /* aim: mouse on desktop, facing direction on touch */
-  var mouseAim = !usingTouch && (G.t - mouse.moved < 4);
+  var mouseAim = !usingTouch && (G.t - mouse.moved < 4) && !(G.t - pad.aimT < 3);
+  var stickAim = G.t - pad.aimT < 3;
   var mw = screenToWorld(mouse.x, mouse.y), ox = c ? c.x : player.x, oy = c ? c.y : player.y;
   if (I.act && !G.wheel) { if (c) { exitCar(); } else { enterCar(); } c = player.car; }
   if (c) {
     c.thr = I.up ? 1 : (I.down ? -1 : 0);
     /* steering ramps in/out instead of snapping -> smooth arcs on keyboard & touch */
-    var wantStr = (I.right ? 1 : 0) - (I.left ? 1 : 0);
+    var wantStr = I.padSteer ? clamp(I.padSteer * 1.2, -1, 1) : ((I.right ? 1 : 0) - (I.left ? 1 : 0));
+    if (I.padGas > 0.15 || I.padBrake > 0.15) { c.thr = I.padGas > 0.15 ? I.padGas : -I.padBrake; }
     c.str += (wantStr - c.str) * (1 - Math.exp(-dt * (wantStr === 0 ? 14 : 9)));
     c.hb = !!I.hb;
     if (c.type === 'tank') {
-      var want = mouseAim ? Math.atan2(mw.y - oy, mw.x - ox) : c.a;
+      var want = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - oy, mw.x - ox) : c.a);
       c.turretA = wrapA(c.turretA + clamp(wrapA(want - c.turretA), -2.5 * dt, 2.5 * dt));
     }
     player.x = c.x; player.y = c.y; player.aim = c.a;
@@ -56,6 +58,7 @@ function updatePlayer(dt, I) {
   } else {
     var mx = (I.right ? 1 : 0) - (I.left ? 1 : 0), my = (I.down ? 1 : 0) - (I.up ? 1 : 0);
     var sp = I.sprint ? 210 : 135;
+    if (I.padMoveX || I.padMoveY) { mx = I.padMoveX; my = I.padMoveY; sp *= Math.min(1, Math.sqrt(mx * mx + my * my)); }
     if (mx || my) {
       var l = Math.sqrt(mx * mx + my * my), ka = 1 - Math.exp(-dt * 14);
       player.vx += (mx / l * sp - player.vx) * ka; player.vy += (my / l * sp - player.vy) * ka;
@@ -63,8 +66,8 @@ function updatePlayer(dt, I) {
     } else { var kd = 1 - Math.exp(-dt * 18); player.vx -= player.vx * kd; player.vy -= player.vy * kd; }
     player.x += player.vx * dt; player.y += player.vy * dt;
     pushOut(player, 8, 0);
-    player.aim = mouseAim ? Math.atan2(mw.y - player.y, mw.x - player.x) : player.a;
-    if (mouseAim) { player.a = player.aim; }
+    player.aim = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - player.y, mw.x - player.x) : player.a);
+    if (mouseAim || stickAim) { player.a = player.aim; }
   }
   if (!G.phone || usingTouch) { if (I.fire && !G.wheel) { playerFire(I.fireHit); } }
   /* cash pickups */
@@ -163,6 +166,7 @@ function updateUI(dt) {
 }
 
 function update(rdt) {
+  pollGamepad();
   var I = readInput(), dt = rdt * G.timeScale, i;
   handleHotkeys();
   G.timeScale = G.wheel ? 0.2 : 1;            /* weapon wheel slows time by 80% */

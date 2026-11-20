@@ -90,11 +90,17 @@
         "tar.xz",
         "AppImage",
         "deb"
-      ]
+      ],
+      "maintainer": "Neon Tide Team <noreply@neontide.invalid>"
     },
     "electronLanguages": [
       "en-US"
     ],
     "compression": "maximum"
-  }
+  },
+  "author": {
+    "name": "Neon Tide Team",
+    "email": "noreply@neontide.invalid"
+  },
+  "homepage": "https://github.com/n95460754/GTA6"
 }

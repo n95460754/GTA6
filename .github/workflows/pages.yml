@@ -1,0 +1,27 @@
+# Publishes the game to GitHub Pages so it can be played in the PS4 / PS5 /
+# Xbox / Smart-TV web browser (or any phone) with a controller.
+# One-time: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+name: pages
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency: { group: pages, cancel-in-progress: true }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: '${{ steps.d.outputs.page_url }}' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: node scripts/bundle.js && mkdir -p site && cp app/index.html site/index.html
+      - uses: actions/configure-pages@v5
+        with: { enablement: true }
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - id: d
+        uses: actions/deploy-pages@v4

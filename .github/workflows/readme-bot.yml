@@ -1,0 +1,27 @@
+# README bot: keeps the status / releases / cheats / modules section of README.md current.
+name: readme-bot
+on:
+  push:
+    paths-ignore: ['README.md']
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --no-audit --no-fund acorn
+      - run: node scripts/readme-bot.js
+      - name: Commit if changed
+        run: |
+          if git diff --quiet README.md; then echo "README unchanged"; exit 0; fi
+          git config user.name "neon-tide-readme-bot"
+          git config user.email "readme-bot@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: README bot update [skip ci]"
+          git push

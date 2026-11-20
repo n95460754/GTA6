@@ -69,7 +69,7 @@ function updatePlayer(dt, I) {
     player.aim = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - player.y, mw.x - player.x) : player.a);
     if (mouseAim || stickAim) { player.a = player.aim; }
   }
-  if (!G.phone || usingTouch) { if (I.fire && !G.wheel) { playerFire(I.fireHit); } }
+  if (!G.phone || usingTouch) { if ((I.fire || I.fireHit) && !G.wheel) { playerFire(I.fireHit); } }
   /* cash pickups */
   for (var i = pickups.length - 1; i >= 0; i--) {
     var p = pickups[i]; p.t += dt;
@@ -132,6 +132,7 @@ function updateRockets(dt) {
     for (j = 0; j < cars.length && !boom; j++) { if (cars[j] !== r.car && dist(r.x, r.y, cars[j].x, cars[j].y) < cars[j].r + 4) { boom = true; } }
     for (j = 0; j < peds.length && !boom; j++) { if (!peds[j].dead && dist(r.x, r.y, peds[j].x, peds[j].y) < 10) { boom = true; } }
     if (!boom && r.owner !== 'player' && !player.car && dist(r.x, r.y, player.x, player.y) < 14) { boom = true; }
+    if (!boom && r.owner === 'player' && mpNearRemote(r.x, r.y, 18)) { boom = true; }
     if (boom) { rockets.splice(i, 1); explode(r.x, r.y, r.owner); }
   }
 }
@@ -189,6 +190,7 @@ function update(rdt) {
   collideCars(dt);
   for (i = 0; i < peds.length; i++) { peds[i].update(dt); }
   updateRockets(dt); updateParticles(dt);
+  mpUpdate(rdt);
   policeDirector(dt); population(dt); missionUpdate(dt); heistUpdate(dt); updateUI(rdt);
   keysHit = {}; touchHits = {}; mouse.hit = false;
 }

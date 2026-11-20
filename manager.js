@@ -215,6 +215,7 @@ function serve(port) {
   http.createServer(function (req, res) {
     var url = req.url.split('?')[0];
     var ip = req.socket.remoteAddress;
+    if (url.indexOf('/mp/') === 0) { mpHandle(req, res, url); return; }
     if (url === '/__version') {
       if (!clients[ip]) { log('HOT', 'device connected: ' + ip + '  ' + (req.headers['user-agent'] || '').slice(0, 60)); }
       clients[ip] = Date.now();
@@ -230,6 +231,42 @@ function serve(port) {
     console.log('    http://localhost:' + port + '/');
     lanAddresses().forEach(function (a) { console.log('    http://' + a + ':' + port + '/'); });
     log('HOT', 'Watching src/ - save to reload every connected rig.');
+    log('MP', 'Multiplayer relay live on the same address (up to 16 players).');
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* 3b. MULTIPLAYER RELAY (same port as the dev server)                 */
+/* ------------------------------------------------------------------ */
+/* Clients POST their state ~12x/s and receive everyone else's state plus
+   gameplay events (shots, explosions, PvP hits). CORS is open so file://
+   Electron/Android builds and other origins can join over the LAN. */
+var MPS = { players: {}, events: [], seq: 0 };
+function mpHandle(req, res, url) {
+  var hdr = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+  var now = Date.now(), id;
+  for (id in MPS.players) { if (now - MPS.players[id].t > 5000) { log('MP', MPS.players[id].s.name + ' left'); delete MPS.players[id]; } }
+  if (req.method === 'OPTIONS') { res.writeHead(204, hdr); res.end(); return; }
+  if (url === '/mp/ping') { res.writeHead(200, hdr); res.end(JSON.stringify({ server: 'neontide-mp', players: Object.keys(MPS.players).length, seq: MPS.seq })); return; }
+  if (url !== '/mp/sync' || req.method !== 'POST') { res.writeHead(404, hdr); res.end('{}'); return; }
+  var body = '';
+  req.on('data', function (c) { body += c; if (body.length > 65536) { req.destroy(); } });
+  req.on('end', function () {
+    var d; try { d = JSON.parse(body); } catch (e) { res.writeHead(400, hdr); res.end('{}'); return; }
+    if (!d || !d.me || typeof d.me.id !== 'string') { res.writeHead(400, hdr); res.end('{}'); return; }
+    var me = d.me;
+    if (!MPS.players[me.id]) {
+      if (Object.keys(MPS.players).length >= 16) { res.writeHead(503, hdr); res.end('{}'); return; }
+      log('MP', String(me.name).slice(0, 20) + ' joined (' + (Object.keys(MPS.players).length + 1) + ' online)');
+    }
+    MPS.players[me.id] = { s: me, t: now };
+    (d.ev || []).slice(0, 40).forEach(function (e) { MPS.seq++; e.seq = MPS.seq; e.from = me.id; MPS.events.push(e); });
+    if (MPS.events.length > 400) { MPS.events.splice(0, MPS.events.length - 400); }
+    var since = typeof d.seq === 'number' ? d.seq : MPS.seq;
+    var out = { seq: MPS.seq, players: [], events: MPS.events.filter(function (e) { return e.seq > since && e.from !== me.id; }) };
+    for (id in MPS.players) { if (id !== me.id) { out.players.push(MPS.players[id].s); } }
+    res.writeHead(200, hdr); res.end(JSON.stringify(out));
   });
 }
 
@@ -312,7 +349,7 @@ function build() {
 /* ------------------------------------------------------------------ */
 function menu() {
   var rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
-  console.log('\n\x1b[35m  NEON TIDE // GAME MANAGER\x1b[0m\n  1) Run tests\n  2) Hot-reload dev server\n  3) Build everything into /dist\n  4) Quit\n');
+  console.log('\n\x1b[35m  NEON TIDE // GAME MANAGER\x1b[0m\n  1) Run tests\n  2) Hot-reload dev server + multiplayer relay\n  3) Build everything into /dist\n  4) Quit\n');
   rl.question('  > ', function (a) {
     rl.close();
     if (a === '1') { process.exit(runTests() ? 0 : 1); }
@@ -322,6 +359,7 @@ function menu() {
 }
 
 if (args.indexOf('--test') >= 0) { process.exit(runTests() ? 0 : 1); }
+else if (args.indexOf('--multiplayer') >= 0) { serve(parseInt(args[args.indexOf('--multiplayer') + 1], 10) || 8080); }
 else if (args.indexOf('--serve') >= 0) { var pi = args.indexOf('--serve'); serve(parseInt(args[pi + 1], 10) || 8080); }
 else if (args.indexOf('--build') >= 0) { build(); }
 else { menu(); }

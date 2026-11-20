@@ -239,6 +239,7 @@ function renderWorld() {
   for (i = 0; i < peds.length; i++) { e = peds[i]; if (e.x > vx0 - 20 && e.x < vx1 + 20 && e.y > vy0 - 20 && e.y < vy1 + 20) { drawPed(e, e.color, e.shirt, false); } }
   if (!player.car) { drawPed(player, '#c68642', CHARS[player.ch].color, true); }
   for (i = 0; i < cars.length; i++) { e = cars[i]; if (e.z <= 5 && e.x > vx0 - 60 && e.x < vx1 + 60 && e.y > vy0 - 60 && e.y < vy1 + 60) { drawCar(e); } }
+  mpDrawWorld();
   drawBuildings(vx0, vy0, vx1, vy1);
   drawPalms(vx0, vy0, vx1, vy1);
   for (i = 0; i < cars.length; i++) { e = cars[i]; if (e.z > 5) { drawCar(e); } }   // airborne cars above roofs

@@ -74,6 +74,7 @@ function drawHUD() {
     var s = mm / WORLD;
     for (i = 0; i < cars.length; i++) { if (cars[i].role && !cars[i].dead) { ctx.fillStyle = blink ? '#ff1f3d' : '#1f6dff'; ctx.fillRect(L + cars[i].x * s - 1.5, my + cars[i].y * s - 1.5, 3, 3); } }
     if (G.mission) { var tg = missionTarget(G.mission.def); if (tg) { ctx.fillStyle = '#ffe600'; ctx.fillRect(L + tg.x * s - 3, my + tg.y * s - 3, 6, 6); } }
+    mpMinimap(L, my, s);
     ctx.fillStyle = '#fff'; ctx.fillRect(L + player.x * s - 2, my + player.y * s - 2, 4, 4);
     font(9 * u, false); text(gfx.fps + 'FPS ' + (gfx.low ? 'TOP-DOWN' : 'PERSP-3D') + (G.gravMul < 1 ? ' LOWG' : ''), L, my + mm + 11 * u, '#9b8fbf');
   }
@@ -122,6 +123,7 @@ function drawHUD() {
     for (i = 0; i < feed.lines.length; i++) { text(feed.lines[i].length > 24 ? feed.lines[i].substr(0, 24) : feed.lines[i], fx + 8 * u, fy + (52 + i * 14) * u, i === feed.lines.length - 1 ? '#ffe600' : '#ddd'); }
     ctx.globalAlpha = 1;
   }
+  mpDrawHUD();
   /* --- retro flashing center message --- */
   if (flashMsg.t > 0) {
     var cols = ['#ff3fa4', '#3ff6ff', '#ffe600', '#9b5cff'];
@@ -156,7 +158,8 @@ var phoneRect = { x: 0, y: 0, w: 0, h: 0 };
 var PHONE_APPS = [
   { id: 'heist', label: 'HEIST', c: '#2ee59d' }, { id: 'jobs', label: 'JOBS', c: '#ffe600' },
   { id: 'trust', label: 'TRUST', c: '#ff3fa4' }, { id: 'feed', label: 'FLEXTOK', c: '#3ff6ff' },
-  { id: 'settings', label: 'SETTINGS', c: '#9b5cff' }, { id: 'switch', label: 'SWITCH', c: '#ff8a1f' }
+  { id: 'settings', label: 'SETTINGS', c: '#9b5cff' }, { id: 'switch', label: 'SWITCH', c: '#ff8a1f' },
+  { id: 'online', label: 'ONLINE', c: '#2ee59d' }
 ];
 function phoneKey(i) { if (G.page === 'home') { openApp(PHONE_APPS[i].id); } else if (i === 0) { G.page = 'home'; } }
 function openApp(id) {
@@ -177,7 +180,7 @@ function drawPhone() {
   text((hh < 10 ? '0' : '') + hh + ':' + (mmn < 10 ? '0' : '') + mmn, sx + sw - 6 * u, py + 18 * u, '#fff', 'right');
   var cx = sx + 10 * u, cw = sw - 20 * u, y = sy + 12 * u, i;
   if (G.page === 'home') {
-    var cols = 2, gw = (cw - 10 * u) / cols, gh = Math.min(58 * u, (sh - 60 * u) / 3);
+    var cols = 2, gw = (cw - 10 * u) / cols, gh = Math.min(58 * u, (sh - 70 * u) / 4);
     for (i = 0; i < PHONE_APPS.length; i++) {
       (function (app, idx) {
         btn(cx + (idx % cols) * (gw + 10 * u), y + Math.floor(idx / cols) * (gh + 8 * u), gw, gh, app.label, app.c, function () { openApp(app.id); }, '[' + (idx < 4 ? (idx + 1) : '-') + ']');
@@ -211,6 +214,13 @@ function drawPhone() {
       para('Followers: ' + G.followers, '#3ff6ff');
       para('Chaos goes viral. Pursuits and explosions get streamed live by bystanders.');
       btn(cx, y, cw, 28 * u, 'GO LIVE NOW', '#3ff6ff', function () { feed.cd = 0; feedTrigger('SELFIE'); });
+    } else if (G.page === 'online') {
+      para('Status: ' + MP.status, MP.on ? '#2ee59d' : '#ff8a1f');
+      para('You: ' + MP.name);
+      var nm = []; for (var pid in MP.players) { if (MP.players.hasOwnProperty(pid)) { nm.push(MP.players[pid].name); } }
+      para(nm.length ? 'In lobby: ' + nm.join(', ') : 'No other players yet.');
+      btn(cx, y, cw, 28 * u, MP.on ? 'RECONNECT' : 'JOIN LOBBY', '#2ee59d', mpJoinPrompt); y += 36 * u;
+      para('Host: run node manager.js --serve on a PC, open http://PC-IP:8080 on every device (PC, phone, PS4/PS5).', '#aaa');
     } else if (G.page === 'settings') {
       btn(cx, y, cw, 28 * u, 'GRAPHICS: ' + gfx.mode.toUpperCase(), '#9b5cff', cycleGfx); y += 34 * u;
       btn(cx, y, cw, 28 * u, 'CONTROLS: ' + (usingTouch ? 'TOUCH' : 'KEYS'), '#9b5cff', function () { usingTouch = !usingTouch; }); y += 34 * u;

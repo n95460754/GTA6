@@ -19,7 +19,12 @@ function hitscan(x, y, ang, range, dmg, owner, ownerCar, color) {
     px = player.x - x; py = player.y - y; t = px * cx + py * cy;
     if (t > 0 && t < bestT && Math.abs(px * cy - py * cx) < 10) { bestT = t; best = player; kind = 'player'; }
   }
+  if (owner === 'player' && MP.on) {          /* PvP: remote players on the ray */
+    var mt = mpRayHit(x, y, cx, cy, bestT, dmg);
+    if (mt >= 0) { bestT = mt; best = null; kind = 'net'; }
+  }
   var ex = x + cx * bestT, ey = y + cy * bestT;
+  if (owner === 'player') { mpEmit({ t: 'shot', x1: Math.round(x), y1: Math.round(y), x2: Math.round(ex), y2: Math.round(ey) }); }
   if (tracers.length < 40) { tracers.push({ x1: x, y1: y, x2: ex, y2: ey, t: 0.07, c: color || '#ffe600' }); }
   if (kind === 'car') { best.damage(dmg * 0.6, owner); sparks(ex, ey, 3); if (best.ai === 'civ') { fleeCar(best, x, y); } if (best === player.car) { hurtPlayer(dmg * 0.15); } }
   else if (kind === 'ped') { best.hp -= dmg; if (best.hp <= 0) { best.kill(owner, ang); } else { best.state = 'flee'; best.t = 6; best.fx = x; best.fy = y; } }
@@ -34,6 +39,7 @@ function fireRocket(x, y, a, owner, ownerCar, kind) {
 }
 function explode(x, y, owner) {
   var R = 150, i, e, d, f;
+  if (owner === 'player') { mpEmit({ t: 'boom', x: Math.round(x), y: Math.round(y) }); }
   for (i = 0; i < cars.length; i++) {
     e = cars[i]; d = dist(x, y, e.x, e.y);
     if (d < R) {

@@ -55,6 +55,25 @@ jobs:
             dist/*.deb
             dist/*.tar.xz
 
+  macos:
+    needs: test
+    if: github.event_name != 'schedule'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/setup.js
+      - run: npx electron-builder --publish never --mac dmg pkg --universal
+        env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-tide-macos
+          path: |
+            dist/*.dmg
+            dist/*.pkg
+
   android:
     needs: test
     if: github.event_name != 'schedule'
@@ -75,7 +94,7 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
 
   release:
-    needs: [windows, linux, android]
+    needs: [windows, linux, macos, android]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

@@ -71,3 +71,23 @@ node manager.js --build --only=win,linux
 | macOS universal .dmg | `npm run build:mac` | **must run on macOS** |
 | Android 7+ (.apk) | Capacitor 6 / Cordova 12 | modern toolchains need minSdk 23-24 |
 | Android 1.x-6 | `legacy-android/` (minSdk 1 WebView, legacy SDK + ant) or open `index.html` in the stock browser | no modern tool builds API<23 APKs |
+
+<!-- README-BOT:START -->
+## Status (auto-updated by the README bot)
+
+- **Tests:** ✅ 15 passed, 0 failed
+- **Engine:** 25 modules, 2293 lines of strict ES5
+- **Updated:** 2026-11-20 22:04 UTC
+
+### Release files
+| File | Size |
+|---|---|
+| [`NeonTide-linux-x64.tar.xz`](releases/NeonTide-linux-x64.tar.xz) | 65.0 MB |
+| [`NeonTide-windows-x64.7z`](releases/NeonTide-windows-x64.7z) | 64.2 MB |
+
+### Cheat codes
+`MEDSUPPLY` full health & armor · `HEAVYMETAL` battle tank delivered · `TOOLBOX` pistol + micro smg + rpg, max ammo · `NITROUS` turbo: accel x3, top speed x4 · `BLANKSLATE` wanted level cleared · `MAXHEAT` five star fugitive · `LOWGRAVITY` gravity x0.15 · `MONEYRAIN` +$250,000
+
+### Engine modules (lines)
+`00-polyfills-math-utilities` (26) · `01-platform-layer-browser-electron-nw-js-co` (31) · `02-constants-tuning-tables-global-state` (105) · `03-screen-resolution-adaptive-scaling` (20) · `04-procedural-world-generation-palmetto-cou` (128) · `05-entities-cars-prototype-pedestrians-part` (121) · `06-notifications-flash-messages-social-feed` (18) · `07-heat-index-wanted-level-crime` (26) · `08-combat-hitscan-projectiles-explosions` (120) · `09-traffic-ai-road-graph-lane-following-fle` (56) · `10-police-director-state-machine-scaled-by-` (119) · `11-spawning-population-management` (39) · `12-missions-phone-economy-story` (120) · `13-cheat-engine-passive-30-char-buffer-cons` (53) · `14-input-keyboard-mouse-multi-touch-virtual` (124) · `14b-gamepad-dualshock-dualsense-xbox-standard-mapping` (82) · `14c-multiplayer-lan-online-relay-client` (151) · `15-update-loop` (198) · `16-adaptive-graphics-core-fps-telemetry-pip` (25) · `17-renderer-world-top-down-pipe-pseudo-3d-p` (276) · `18-renderer-hud-phone-wheel-console-touch-c` (308) · `19-camera` (16) · `20-save-load-localstorage-guarded-for-hosts` (18) · `21-native-host-hooks-cordova-capacitor-elec` (56) · `22-boot-main-loop` (57)
+<!-- README-BOT:END -->

@@ -49,7 +49,7 @@ window.NeonTide = {
   setGraphics: function (m) { gfx.mode = m; if (m === 'top') { setLow(true, 'host'); } else if (m === 'persp') { setLow(false); } },
   intent: function (action, data) { if (action === 'cheat') { runCheat(data); } else if (action === 'phone') { togglePhone(); } else if (action === 'back') { backButton(); } },
   state: function () { return { fps: gfx.fps, low: gfx.low, wanted: G.wanted, cash: G.cash, hp: player.hp, armor: player.armor, inCar: !!player.car, cars: cars.length, peds: peds.length, police: countPolice(), gravity: G.gravMul, weapon: player.weap, ammo: player.ammo.slice(0), t: G.t, mission: G.mission ? G.mission.def.name : null }; },
-  debug: { G: G, player: player, cars: cars, gfx: gfx }
+  debug: { G: G, player: player, cars: cars, gfx: gfx, MP: MP }
 };
 function countPolice() { var n = 0; for (var i = 0; i < cars.length; i++) { if (cars[i].role && cars[i].ai === 'police') { n++; } } return n; }
 

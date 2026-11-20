@@ -48,6 +48,7 @@ function boot() {
   on(canvas, 'touchstart', onTouchStart, passive); on(canvas, 'touchmove', onTouchMove, passive);
   on(canvas, 'touchend', onTouchEnd, passive); on(canvas, 'touchcancel', onTouchEnd, passive);
   initHosts();
+  mpInit();
   notify('ROSA', 'Welcome back to Coral Bay, ' + (player.ch === 0 ? 'me' : 'Dex') + '. Phone is on P. Do not get us killed.');
   lastT = clock();
   nextFrame(frame);

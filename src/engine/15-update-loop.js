@@ -7,7 +7,9 @@ function screenToWorld(x, y) { return { x: (x - VW / 2) / cam.zoom + cam.x, y: (
 function readInput() {
   var ts = usingTouch ? touchState() : null;
   var I = {
-    up: keys[87] || keys[38], down: keys[83] || keys[40], left: keys[65] || keys[37], right: keys[68] || keys[39],
+    /* in 3D the arrow keys look around; WASD moves */
+    up: keys[87] || (!gfx.p3d && keys[38]), down: keys[83] || (!gfx.p3d && keys[40]),
+    left: keys[65] || (!gfx.p3d && keys[37]), right: keys[68] || (!gfx.p3d && keys[39]),
     fire: keys[74] || keys[17] || mouse.down, fireHit: keysHit[74] || keysHit[17] || mouse.hit,
     hb: keys[32], sprint: keys[16], act: keysHit[69] || keysHit[70] || touchHits.act
   };
@@ -46,7 +48,7 @@ function updatePlayer(dt, I) {
     c.str += (wantStr - c.str) * (1 - Math.exp(-dt * (wantStr === 0 ? 14 : 9)));
     c.hb = !!I.hb;
     if (c.type === 'tank') {
-      var want = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - oy, mw.x - ox) : c.a);
+      var want = gfx.p3d ? C3.yaw : (stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - oy, mw.x - ox) : c.a));
       c.turretA = wrapA(c.turretA + clamp(wrapA(want - c.turretA), -2.5 * dt, 2.5 * dt));
     }
     player.x = c.x; player.y = c.y; player.aim = c.a;
@@ -77,6 +79,7 @@ function updatePlayer(dt, I) {
     pushOut(player, 8, 0);
     player.aim = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - player.y, mw.x - player.x) : player.a);
     if (mouseAim || stickAim) { player.a = player.aim; }
+    if (gfx.p3d) { player.aim = wrapA(player.a + C3.look); }        /* shoot where the camera looks */
   }
   if (!G.phone || usingTouch) { if ((I.fire || I.fireHit) && !G.wheel) { playerFire(I.fireHit); } }
   /* cash pickups */
@@ -177,6 +180,10 @@ function updateUI(dt) {
 
 function update(rdt) {
   pollGamepad();
+  /* keyboard look: arrow keys orbit the 3D camera */
+  if (gfx.p3d && !G.wheel && !G.console && (keys[37] || keys[39] || keys[38] || keys[40])) {
+    lookDrag(((keys[39] ? 1 : 0) - (keys[37] ? 1 : 0)) * 240 * rdt, ((keys[40] ? 1 : 0) - (keys[38] ? 1 : 0)) * 160 * rdt);
+  }
   var I = readInput(), dt = rdt * G.timeScale, i;
   handleHotkeys();
   G.timeScale = G.wheel ? 0.2 : 1;            /* weapon wheel slows time by 80% */

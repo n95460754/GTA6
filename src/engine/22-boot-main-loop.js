@@ -43,15 +43,31 @@ function boot() {
   on(canvas, 'mousedown', function (e) {
     var p = mouseXY(e); mouse.x = p.x; mouse.y = p.y; usingTouch = false;
     if (e.button === 2 || e.button === 1) { mouse.look = true; return; }      /* right/middle drag = look around */
-    if (!pointerPress(p.x, p.y, false)) { mouse.down = true; mouse.hit = true; }
+    var consumed = pointerPress(p.x, p.y, false);
+    /* PC mouse-look: first click in 3D captures the mouse (Esc releases it) */
+    if (!consumed && gfx.p3d && !mouse.locked && canvas.requestPointerLock && !G.phone && !G.wheel && !G.pad) {
+      try { canvas.requestPointerLock(); } catch (err) { }
+      return;
+    }
+    if (!consumed) { mouse.down = true; mouse.hit = true; }
   });
   on(document, 'mouseup', function () { mouse.down = false; mouse.look = false; });
   on(canvas, 'mousemove', function (e) {
     var p = mouseXY(e);
+    if (mouse.locked && gfx.p3d) { lookDrag(e.movementX || 0, e.movementY || 0); mouse.moved = G.t; return; }
     if (mouse.look && gfx.p3d) { lookDrag(p.x - mouse.x, p.y - mouse.y); }
     mouse.x = p.x; mouse.y = p.y; mouse.moved = G.t; if (G.wheel) { G.wheelSel = wheelSlotAt(p.x, p.y); }
   });
   on(canvas, 'contextmenu', function (e) { stop(e); });
+  on(document, 'pointerlockchange', function () {
+    mouse.locked = document.pointerLockElement === canvas;
+    if (mouse.locked) { notify('SYSTEM', 'Mouse captured: move to look, click to fire, wheel to zoom, Esc to release.', '#ffe600'); }
+  });
+  /* mouse wheel: camera distance in 3D */
+  on(canvas, 'wheel', function (e) {
+    if (!gfx.p3d || G.phone) { return; }
+    C3.zoomK = clamp(C3.zoomK * (e.deltaY > 0 ? 1.1 : 0.9), 0.55, 2.2); stop(e);
+  }, { passive: false });
   var passive = { passive: false };
   on(canvas, 'touchstart', onTouchStart, passive); on(canvas, 'touchmove', onTouchMove, passive);
   on(canvas, 'touchend', onTouchEnd, passive); on(canvas, 'touchcancel', onTouchEnd, passive);

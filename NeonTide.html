@@ -619,7 +619,11 @@ function playerFire(pressed) {
   if (!w.auto && !pressed) { return; }
   if (player.weap > 0 && player.ammo[player.weap] <= 0) { notify('SYSTEM', 'Out of ammo. Press Q for the weapon wheel.', '#ffe600'); player.fireCd = 0.6; return; }
   if (c) { a = c.a; x = c.x + Math.cos(a) * (c.w * 0.6); y = c.y + Math.sin(a) * (c.w * 0.6); if (player.weap === 0) { return; } }
-  else { x = player.x + Math.cos(a) * 10; y = player.y + Math.sin(a) * 10; player.a = a; }
+  else {
+    x = player.x + Math.cos(a) * 10; y = player.y + Math.sin(a) * 10;
+    if (gfx.p3d) { C3.look = wrapA(C3.look - wrapA(a - player.a)); }   /* turn to aim without spinning the camera */
+    player.a = a;
+  }
   player.fireCd = w.cd;
   var mul = player.ch === 1 ? 1.25 : 1;
   if (player.weap === 0) {          /* MELEE: short collision check + pushback, no ammo */
@@ -1418,7 +1422,9 @@ function screenToWorld(x, y) { return { x: (x - VW / 2) / cam.zoom + cam.x, y: (
 function readInput() {
   var ts = usingTouch ? touchState() : null;
   var I = {
-    up: keys[87] || keys[38], down: keys[83] || keys[40], left: keys[65] || keys[37], right: keys[68] || keys[39],
+    /* in 3D the arrow keys look around; WASD moves */
+    up: keys[87] || (!gfx.p3d && keys[38]), down: keys[83] || (!gfx.p3d && keys[40]),
+    left: keys[65] || (!gfx.p3d && keys[37]), right: keys[68] || (!gfx.p3d && keys[39]),
     fire: keys[74] || keys[17] || mouse.down, fireHit: keysHit[74] || keysHit[17] || mouse.hit,
     hb: keys[32], sprint: keys[16], act: keysHit[69] || keysHit[70] || touchHits.act
   };
@@ -1457,7 +1463,7 @@ function updatePlayer(dt, I) {
     c.str += (wantStr - c.str) * (1 - Math.exp(-dt * (wantStr === 0 ? 14 : 9)));
     c.hb = !!I.hb;
     if (c.type === 'tank') {
-      var want = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - oy, mw.x - ox) : c.a);
+      var want = gfx.p3d ? C3.yaw : (stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - oy, mw.x - ox) : c.a));
       c.turretA = wrapA(c.turretA + clamp(wrapA(want - c.turretA), -2.5 * dt, 2.5 * dt));
     }
     player.x = c.x; player.y = c.y; player.aim = c.a;
@@ -1488,6 +1494,7 @@ function updatePlayer(dt, I) {
     pushOut(player, 8, 0);
     player.aim = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - player.y, mw.x - player.x) : player.a);
     if (mouseAim || stickAim) { player.a = player.aim; }
+    if (gfx.p3d) { player.aim = wrapA(player.a + C3.look); }        /* shoot where the camera looks */
   }
   if (!G.phone || usingTouch) { if ((I.fire || I.fireHit) && !G.wheel) { playerFire(I.fireHit); } }
   /* cash pickups */
@@ -1588,6 +1595,10 @@ function updateUI(dt) {
 
 function update(rdt) {
   pollGamepad();
+  /* keyboard look: arrow keys orbit the 3D camera */
+  if (gfx.p3d && !G.wheel && !G.console && (keys[37] || keys[39] || keys[38] || keys[40])) {
+    lookDrag(((keys[39] ? 1 : 0) - (keys[37] ? 1 : 0)) * 240 * rdt, ((keys[40] ? 1 : 0) - (keys[38] ? 1 : 0)) * 160 * rdt);
+  }
   var I = readInput(), dt = rdt * G.timeScale, i;
   handleHotkeys();
   G.timeScale = G.wheel ? 0.2 : 1;            /* weapon wheel slows time by 80% */
@@ -1943,7 +1954,7 @@ function renderWorld() {
      4. painter's algorithm: ground layer first, then objects far->near
    No WebGL: runs on the same CPU-only Canvas 2D path as the 2D pipes.
    ===================================================================== */
-var C3 = { x: 0, y: 0, z: 60, yaw: 0, pitch: 0.2, f: 500, near: 4, far: 1700, ready: false, look: 0, lookP: 0, lookT: -10,
+var C3 = { x: 0, y: 0, z: 60, zoomK: 1, yaw: 0, pitch: 0.2, f: 500, near: 4, far: 1700, ready: false, look: 0, lookP: 0, lookT: -10,
   cy: 1, sy: 0, cp: 1, sp: 0, hz: 0 };
 var r3objs = [], r3night = 0, r3fog = [40, 20, 70], r3sun = 1;
 var colorCache = {};
@@ -1990,8 +2001,8 @@ function updateCamera3D(dt) {
   if (G.t - C3.lookT < 0.15) { k = 1 - Math.exp(-dt * 18); }
   if (!C3.ready) { C3.yaw = head; }
   C3.yaw = wrapA(C3.yaw + wrapA(head - C3.yaw) * k);
-  var dist3 = c ? (c.type === 'tank' ? 175 : 125) + Math.min(70, Math.abs(c.v) * 0.12) : 78;
-  var h = c ? (c.type === 'tank' ? 72 : 52) : 40;
+  var dist3 = (c ? (c.type === 'tank' ? 175 : 125) + Math.min(70, Math.abs(c.v) * 0.12) : 78) * C3.zoomK;
+  var h = (c ? (c.type === 'tank' ? 72 : 52) : 40) * (0.6 + C3.zoomK * 0.4);
   var tx = P.x - Math.cos(C3.yaw) * dist3, ty = P.y - Math.sin(C3.yaw) * dist3;
   /* never put the lens inside a wall: pull in along the ray */
   var fr = rayFrac(P.x, P.y, tx, ty);
@@ -2498,7 +2509,7 @@ function drawHUD() {
   /* --- intro controls hint --- */
   if (G.hintT > 0 && !G.phone) {
     font(11 * u, false);
-    var hint = gfx.p3d && usingTouch ? 'D-PAD move | drag anywhere = look around | GAS/BRK | ENTER car | FIRE | WPN | PHONE' : gfx.p3d && !pad.on ? 'W/S walk, A/D turn | right-mouse drag = look around | E car | J fire | Q wheel | P phone | G graphics' : pad.on ? 'L-stick move/steer | R2 gas/fire | L2 brake | R1 fire | TRIANGLE car | L1 wheel | OPTIONS phone | SQUARE switch' : usingTouch ? 'D-PAD move | GAS/BRK drive | ENTER car | FIRE | WPN wheel | PHONE | 3x tap top-left = cheats'
+    var hint = gfx.p3d && usingTouch ? 'D-PAD move | drag anywhere = look around | GAS/BRK | ENTER car | FIRE | WPN | PHONE' : gfx.p3d && !pad.on ? 'Click = capture mouse, move to look | WASD move/drive | Arrows look | Wheel zoom | Click/J fire | E car | Q wheel | P phone | Esc free mouse' : pad.on ? 'L-stick move/steer | R2 gas/fire | L2 brake | R1 fire | TRIANGLE car | L1 wheel | OPTIONS phone | SQUARE switch' : usingTouch ? 'D-PAD move | GAS/BRK drive | ENTER car | FIRE | WPN wheel | PHONE | 3x tap top-left = cheats'
       : 'WASD/Arrows move | E enter car | Click/J fire | Q wheel | P phone | C switch | G graphics | ~ console';
     var hl = wrapLines(hint, VW - 40 * u);
     for (i = 0; i < hl.length; i++) { text(hl[i], VW / 2, VH * 0.62 + i * 14 * u, '#e0d0ff', 'center'); }
@@ -2811,15 +2822,31 @@ function boot() {
   on(canvas, 'mousedown', function (e) {
     var p = mouseXY(e); mouse.x = p.x; mouse.y = p.y; usingTouch = false;
     if (e.button === 2 || e.button === 1) { mouse.look = true; return; }      /* right/middle drag = look around */
-    if (!pointerPress(p.x, p.y, false)) { mouse.down = true; mouse.hit = true; }
+    var consumed = pointerPress(p.x, p.y, false);
+    /* PC mouse-look: first click in 3D captures the mouse (Esc releases it) */
+    if (!consumed && gfx.p3d && !mouse.locked && canvas.requestPointerLock && !G.phone && !G.wheel && !G.pad) {
+      try { canvas.requestPointerLock(); } catch (err) { }
+      return;
+    }
+    if (!consumed) { mouse.down = true; mouse.hit = true; }
   });
   on(document, 'mouseup', function () { mouse.down = false; mouse.look = false; });
   on(canvas, 'mousemove', function (e) {
     var p = mouseXY(e);
+    if (mouse.locked && gfx.p3d) { lookDrag(e.movementX || 0, e.movementY || 0); mouse.moved = G.t; return; }
     if (mouse.look && gfx.p3d) { lookDrag(p.x - mouse.x, p.y - mouse.y); }
     mouse.x = p.x; mouse.y = p.y; mouse.moved = G.t; if (G.wheel) { G.wheelSel = wheelSlotAt(p.x, p.y); }
   });
   on(canvas, 'contextmenu', function (e) { stop(e); });
+  on(document, 'pointerlockchange', function () {
+    mouse.locked = document.pointerLockElement === canvas;
+    if (mouse.locked) { notify('SYSTEM', 'Mouse captured: move to look, click to fire, wheel to zoom, Esc to release.', '#ffe600'); }
+  });
+  /* mouse wheel: camera distance in 3D */
+  on(canvas, 'wheel', function (e) {
+    if (!gfx.p3d || G.phone) { return; }
+    C3.zoomK = clamp(C3.zoomK * (e.deltaY > 0 ? 1.1 : 0.9), 0.55, 2.2); stop(e);
+  }, { passive: false });
   var passive = { passive: false };
   on(canvas, 'touchstart', onTouchStart, passive); on(canvas, 'touchmove', onTouchMove, passive);
   on(canvas, 'touchend', onTouchEnd, passive); on(canvas, 'touchcancel', onTouchEnd, passive);

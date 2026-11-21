@@ -93,7 +93,11 @@ function playerFire(pressed) {
   if (!w.auto && !pressed) { return; }
   if (player.weap > 0 && player.ammo[player.weap] <= 0) { notify('SYSTEM', 'Out of ammo. Press Q for the weapon wheel.', '#ffe600'); player.fireCd = 0.6; return; }
   if (c) { a = c.a; x = c.x + Math.cos(a) * (c.w * 0.6); y = c.y + Math.sin(a) * (c.w * 0.6); if (player.weap === 0) { return; } }
-  else { x = player.x + Math.cos(a) * 10; y = player.y + Math.sin(a) * 10; player.a = a; }
+  else {
+    x = player.x + Math.cos(a) * 10; y = player.y + Math.sin(a) * 10;
+    if (gfx.p3d) { C3.look = wrapA(C3.look - wrapA(a - player.a)); }   /* turn to aim without spinning the camera */
+    player.a = a;
+  }
   player.fireCd = w.cd;
   var mul = player.ch === 1 ? 1.25 : 1;
   if (player.weap === 0) {          /* MELEE: short collision check + pushback, no ammo */

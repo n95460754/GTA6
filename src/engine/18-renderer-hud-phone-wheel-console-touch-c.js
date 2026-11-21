@@ -134,7 +134,7 @@ function drawHUD() {
   /* --- intro controls hint --- */
   if (G.hintT > 0 && !G.phone) {
     font(11 * u, false);
-    var hint = gfx.p3d && usingTouch ? 'D-PAD move | drag anywhere = look around | GAS/BRK | ENTER car | FIRE | WPN | PHONE' : gfx.p3d && !pad.on ? 'W/S walk, A/D turn | right-mouse drag = look around | E car | J fire | Q wheel | P phone | G graphics' : pad.on ? 'L-stick move/steer | R2 gas/fire | L2 brake | R1 fire | TRIANGLE car | L1 wheel | OPTIONS phone | SQUARE switch' : usingTouch ? 'D-PAD move | GAS/BRK drive | ENTER car | FIRE | WPN wheel | PHONE | 3x tap top-left = cheats'
+    var hint = gfx.p3d && usingTouch ? 'D-PAD move | drag anywhere = look around | GAS/BRK | ENTER car | FIRE | WPN | PHONE' : gfx.p3d && !pad.on ? 'Click = capture mouse, move to look | WASD move/drive | Arrows look | Wheel zoom | Click/J fire | E car | Q wheel | P phone | Esc free mouse' : pad.on ? 'L-stick move/steer | R2 gas/fire | L2 brake | R1 fire | TRIANGLE car | L1 wheel | OPTIONS phone | SQUARE switch' : usingTouch ? 'D-PAD move | GAS/BRK drive | ENTER car | FIRE | WPN wheel | PHONE | 3x tap top-left = cheats'
       : 'WASD/Arrows move | E enter car | Click/J fire | Q wheel | P phone | C switch | G graphics | ~ console';
     var hl = wrapLines(hint, VW - 40 * u);
     for (i = 0; i < hl.length; i++) { text(hl[i], VW / 2, VH * 0.62 + i * 14 * u, '#e0d0ff', 'center'); }

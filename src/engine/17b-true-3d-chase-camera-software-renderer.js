@@ -9,7 +9,7 @@
      4. painter's algorithm: ground layer first, then objects far->near
    No WebGL: runs on the same CPU-only Canvas 2D path as the 2D pipes.
    ===================================================================== */
-var C3 = { x: 0, y: 0, z: 60, yaw: 0, pitch: 0.2, f: 500, near: 4, far: 1700, ready: false, look: 0, lookP: 0, lookT: -10,
+var C3 = { x: 0, y: 0, z: 60, zoomK: 1, yaw: 0, pitch: 0.2, f: 500, near: 4, far: 1700, ready: false, look: 0, lookP: 0, lookT: -10,
   cy: 1, sy: 0, cp: 1, sp: 0, hz: 0 };
 var r3objs = [], r3night = 0, r3fog = [40, 20, 70], r3sun = 1;
 var colorCache = {};
@@ -56,8 +56,8 @@ function updateCamera3D(dt) {
   if (G.t - C3.lookT < 0.15) { k = 1 - Math.exp(-dt * 18); }
   if (!C3.ready) { C3.yaw = head; }
   C3.yaw = wrapA(C3.yaw + wrapA(head - C3.yaw) * k);
-  var dist3 = c ? (c.type === 'tank' ? 175 : 125) + Math.min(70, Math.abs(c.v) * 0.12) : 78;
-  var h = c ? (c.type === 'tank' ? 72 : 52) : 40;
+  var dist3 = (c ? (c.type === 'tank' ? 175 : 125) + Math.min(70, Math.abs(c.v) * 0.12) : 78) * C3.zoomK;
+  var h = (c ? (c.type === 'tank' ? 72 : 52) : 40) * (0.6 + C3.zoomK * 0.4);
   var tx = P.x - Math.cos(C3.yaw) * dist3, ty = P.y - Math.sin(C3.yaw) * dist3;
   /* never put the lens inside a wall: pull in along the ray */
   var fr = rayFrac(P.x, P.y, tx, ty);

@@ -18,6 +18,7 @@
 15-update-loop.js
 16-adaptive-graphics-core-fps-telemetry-pip.js
 17-renderer-world-top-down-pipe-pseudo-3d-p.js
+17b-true-3d-chase-camera-software-renderer.js
 18-renderer-hud-phone-wheel-console-touch-c.js
 19-camera.js
 20-save-load-localstorage-guarded-for-hosts.js

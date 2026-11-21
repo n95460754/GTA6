@@ -11,5 +11,6 @@ function updateCamera(dt) {
   cam.lx += ((P.vx * lead) - cam.lx) * (1 - Math.exp(-dt * 2.5)); cam.ly += ((P.vy * lead) - cam.ly) * (1 - Math.exp(-dt * 2.5));
   var tx = P.x + cam.lx, ty = P.y + cam.ly, k = 1 - Math.exp(-dt * 7);
   cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k;
+  if (gfx.p3d) { updateCamera3D(dt); }
 }
 

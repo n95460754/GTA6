@@ -1,6 +1,6 @@
 # NEON TIDE: Palmetto County
 
-Original neon open-world crime sandbox: strict ES5, Canvas 2D only, no assets, no libraries. Native apps for **Windows, Linux and Android**.
+Original neon open-world crime sandbox in **real 3D** (software chase-camera renderer, auto-fallback to 2.5D and top-down): strict ES5, Canvas 2D only, no assets, no libraries. Native apps for **Windows, Linux and Android**.
 
 ## Download & play
 **Fastest:** download [`NeonTide.html`](NeonTide.html) and open it in any browser (PC, phone, PS4/PS5). It is the whole game in one file.
@@ -77,9 +77,9 @@ node manager.js --build --only=win,linux
 <!-- README-BOT:START -->
 ## Status (auto-updated by the README bot)
 
-- **Tests:** ✅ 15 passed, 0 failed
-- **Engine:** 25 modules, 2293 lines of strict ES5
-- **Updated:** 2026-11-21 07:31 UTC
+- **Tests:** ✅ 16 passed, 0 failed
+- **Engine:** 26 modules, 2638 lines of strict ES5
+- **Updated:** 2026-11-21 09:07 UTC
 
 ### Release files
 | File | Size |
@@ -95,5 +95,5 @@ node manager.js --build --only=win,linux
 `MEDSUPPLY` full health & armor · `HEAVYMETAL` battle tank delivered · `TOOLBOX` pistol + micro smg + rpg, max ammo · `NITROUS` turbo: accel x3, top speed x4 · `BLANKSLATE` wanted level cleared · `MAXHEAT` five star fugitive · `LOWGRAVITY` gravity x0.15 · `MONEYRAIN` +$250,000
 
 ### Engine modules (lines)
-`00-polyfills-math-utilities` (26) · `01-platform-layer-browser-electron-nw-js-co` (31) · `02-constants-tuning-tables-global-state` (105) · `03-screen-resolution-adaptive-scaling` (20) · `04-procedural-world-generation-palmetto-cou` (128) · `05-entities-cars-prototype-pedestrians-part` (121) · `06-notifications-flash-messages-social-feed` (18) · `07-heat-index-wanted-level-crime` (26) · `08-combat-hitscan-projectiles-explosions` (120) · `09-traffic-ai-road-graph-lane-following-fle` (56) · `10-police-director-state-machine-scaled-by-` (119) · `11-spawning-population-management` (39) · `12-missions-phone-economy-story` (120) · `13-cheat-engine-passive-30-char-buffer-cons` (53) · `14-input-keyboard-mouse-multi-touch-virtual` (124) · `14b-gamepad-dualshock-dualsense-xbox-standard-mapping` (82) · `14c-multiplayer-lan-online-relay-client` (151) · `15-update-loop` (198) · `16-adaptive-graphics-core-fps-telemetry-pip` (25) · `17-renderer-world-top-down-pipe-pseudo-3d-p` (276) · `18-renderer-hud-phone-wheel-console-touch-c` (308) · `19-camera` (16) · `20-save-load-localstorage-guarded-for-hosts` (18) · `21-native-host-hooks-cordova-capacitor-elec` (56) · `22-boot-main-loop` (57)
+`00-polyfills-math-utilities` (26) · `01-platform-layer-browser-electron-nw-js-co` (31) · `02-constants-tuning-tables-global-state` (105) · `03-screen-resolution-adaptive-scaling` (20) · `04-procedural-world-generation-palmetto-cou` (128) · `05-entities-cars-prototype-pedestrians-part` (121) · `06-notifications-flash-messages-social-feed` (18) · `07-heat-index-wanted-level-crime` (26) · `08-combat-hitscan-projectiles-explosions` (120) · `09-traffic-ai-road-graph-lane-following-fle` (56) · `10-police-director-state-machine-scaled-by-` (119) · `11-spawning-population-management` (39) · `12-missions-phone-economy-story` (120) · `13-cheat-engine-passive-30-char-buffer-cons` (53) · `14-input-keyboard-mouse-multi-touch-virtual` (124) · `14b-gamepad-dualshock-dualsense-xbox-standard-mapping` (82) · `14c-multiplayer-lan-online-relay-client` (152) · `15-update-loop` (207) · `16-adaptive-graphics-core-fps-telemetry-pip` (37) · `17-renderer-world-top-down-pipe-pseudo-3d-p` (276) · `17b-true-3d-chase-camera-software-renderer` (321) · `18-renderer-hud-phone-wheel-console-touch-c` (309) · `19-camera` (17) · `20-save-load-localstorage-guarded-for-hosts` (18) · `21-native-host-hooks-cordova-capacitor-elec` (56) · `22-boot-main-loop` (57)
 <!-- README-BOT:END -->

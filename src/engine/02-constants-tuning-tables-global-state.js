@@ -48,7 +48,7 @@ var G = {
   mission: null, missionIdx: 0, missionDelay: 3, chatterT: 40
 };
 
-var gfx = { mode: 'auto', low: PLATFORM.legacy, fps: 60, frames: 0, acc: 0, goodStreak: 0, pmax: 280 };
+var gfx = { mode: 'auto', low: PLATFORM.legacy, p3d: !PLATFORM.legacy, fps: 60, frames: 0, acc: 0, goodStreak: 0, pmax: 280 };
 
 /* Entity lists (hard capped). */
 var cars = [], peds = [], rockets = [], tracers = [], pickups = [], spikes = [], scorch = [];

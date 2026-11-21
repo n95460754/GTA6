@@ -34,8 +34,8 @@ function updatePlayer(dt, I) {
   if (player.fireCd > 0) { player.fireCd -= dt; }
   if (player.punchT > 0) { player.punchT -= dt; }
   /* aim: mouse on desktop, facing direction on touch */
-  var mouseAim = !usingTouch && (G.t - mouse.moved < 4) && !(G.t - pad.aimT < 3);
-  var stickAim = G.t - pad.aimT < 3;
+  var mouseAim = !gfx.p3d && !usingTouch && (G.t - mouse.moved < 4) && !(G.t - pad.aimT < 3);
+  var stickAim = !gfx.p3d && G.t - pad.aimT < 3;
   var mw = screenToWorld(mouse.x, mouse.y), ox = c ? c.x : player.x, oy = c ? c.y : player.y;
   if (I.act && !G.wheel) { if (c) { exitCar(); } else { enterCar(); } c = player.car; }
   if (c) {
@@ -59,11 +59,20 @@ function updatePlayer(dt, I) {
     var mx = (I.right ? 1 : 0) - (I.left ? 1 : 0), my = (I.down ? 1 : 0) - (I.up ? 1 : 0);
     var sp = I.sprint ? 210 : 135;
     if (I.padMoveX || I.padMoveY) { mx = I.padMoveX; my = I.padMoveY; sp *= Math.min(1, Math.sqrt(mx * mx + my * my)); }
-    if (mx || my) {
+    if (gfx.p3d) {
+      /* 3D chase camera: left/right turn the hero, up/down walk along the view */
+      var turn = mx + (G.t - pad.aimT < 0.2 ? pad.aimX : 0);
+      player.a = wrapA(player.a + turn * 3.0 * dt);
+      var fwd = -my, kv = 1 - Math.exp(-dt * 14);
+      player.vx += (Math.cos(player.a) * fwd * sp * (fwd < 0 ? 0.6 : 1) - player.vx) * kv;
+      player.vy += (Math.sin(player.a) * fwd * sp * (fwd < 0 ? 0.6 : 1) - player.vy) * kv;
+      mx = 0; my = 0;
+    } else if (mx || my) {
       var l = Math.sqrt(mx * mx + my * my), ka = 1 - Math.exp(-dt * 14);
       player.vx += (mx / l * sp - player.vx) * ka; player.vy += (my / l * sp - player.vy) * ka;
       player.a += wrapA(Math.atan2(my, mx) - player.a) * Math.min(1, dt * 16);
     } else { var kd = 1 - Math.exp(-dt * 18); player.vx -= player.vx * kd; player.vy -= player.vy * kd; }
+    if (gfx.p3d && !(I.up || I.down || I.padMoveY)) { var kd3 = 1 - Math.exp(-dt * 18); player.vx -= player.vx * kd3; player.vy -= player.vy * kd3; }
     player.x += player.vx * dt; player.y += player.vy * dt;
     pushOut(player, 8, 0);
     player.aim = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - player.y, mw.x - player.x) : player.a);

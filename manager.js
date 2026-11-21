@@ -159,7 +159,8 @@ function dryRun(src, frames) {
   }
   report.push(['console cheat path (NeonTide.cheat)', api.cheat('HEAVYMETAL') === true]);
   api.setGraphics('top'); step(30); report.push(['top-down pipe renders', api.state().low === true]);
-  api.setGraphics('persp'); step(30); report.push(['perspective pipe renders', api.state().low === false]);
+  api.setGraphics('persp'); step(30); report.push(['2.5D perspective pipe renders', api.state().pipe === 'PERSP-2.5D']);
+  api.setGraphics('3d'); step(120); report.push(['true 3D chase-camera pipe renders', api.state().pipe === '3D']);
   step(frames || 1200);
   var heap = (process.memoryUsage().heapUsed - heap0) / 1048576;
   report.push(['ran ' + (frames || 1200) + ' extra frames, ' + env.ctxCalls.n + ' draw calls', true]);

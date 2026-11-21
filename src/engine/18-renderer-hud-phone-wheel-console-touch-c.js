@@ -35,8 +35,8 @@ function drawHUD() {
   var u = U, blink = Math.floor(G.t * 6) % 2 === 0, i, x, y;
   /* day-night tint + vice sunset gradient */
   var dk = darkness();
-  ctx.fillStyle = 'rgba(25,0,60,' + (dk * 0.42).toFixed(3) + ')'; ctx.fillRect(0, 0, VW, VH);
-  if (!gfx.low) {
+  if (!gfx.p3d) { ctx.fillStyle = 'rgba(25,0,60,' + (dk * 0.42).toFixed(3) + ')'; ctx.fillRect(0, 0, VW, VH); }
+  if (!gfx.low && !gfx.p3d) {
     if (!sunsetGrad && ctx.createLinearGradient) {
       sunsetGrad = ctx.createLinearGradient(0, 0, 0, VH);
       sunsetGrad.addColorStop(0, 'rgba(255,63,164,0.18)'); sunsetGrad.addColorStop(0.5, 'rgba(155,92,255,0)'); sunsetGrad.addColorStop(1, 'rgba(63,246,255,0.12)');
@@ -76,7 +76,7 @@ function drawHUD() {
     if (G.mission) { var tg = missionTarget(G.mission.def); if (tg) { ctx.fillStyle = '#ffe600'; ctx.fillRect(L + tg.x * s - 3, my + tg.y * s - 3, 6, 6); } }
     mpMinimap(L, my, s);
     ctx.fillStyle = '#fff'; ctx.fillRect(L + player.x * s - 2, my + player.y * s - 2, 4, 4);
-    font(9 * u, false); text(gfx.fps + 'FPS ' + (gfx.low ? 'TOP-DOWN' : 'PERSP-3D') + (G.gravMul < 1 ? ' LOWG' : ''), L, my + mm + 11 * u, '#9b8fbf');
+    font(9 * u, false); text(gfx.fps + 'FPS ' + pipeName() + (G.gravMul < 1 ? ' LOWG' : ''), L, my + mm + 11 * u, '#9b8fbf');
   }
   /* --- objective line & off-screen arrow --- */
   var narrow = VW < 560, ty = narrow ? top + 150 * u : top + 4 * u;
@@ -87,9 +87,10 @@ function drawHUD() {
     font(12 * u, true); text(m.name.toUpperCase() + ': ' + obj, VW / 2, ty + 12 * u, '#ffe600', 'center');
     var tgt = missionTarget(m);
     if (tgt) {
-      var sx2 = (tgt.x - cam.x) * cam.zoom + VW / 2, sy2 = (tgt.y - cam.y) * cam.zoom + VH / 2;
+      var sx2 = (tgt.x - cam.x) * cam.zoom + VW / 2, sy2 = (tgt.y - cam.y) * cam.zoom + VH / 2, ts3 = gfx.p3d ? w2s3(tgt.x, tgt.y, 40) : null;
+      if (gfx.p3d) { sx2 = ts3 ? ts3.x : -1; sy2 = ts3 ? ts3.y : -1; }
       if (sx2 < 0 || sx2 > VW || sy2 < 0 || sy2 > VH) {
-        var aa = Math.atan2(sy2 - VH / 2, sx2 - VW / 2), ar = Math.min(VW, VH) * 0.38;
+        var aa = gfx.p3d ? wrapA(Math.atan2(tgt.y - C3.y, tgt.x - C3.x) - C3.yaw) - PI / 2 : Math.atan2(sy2 - VH / 2, sx2 - VW / 2), ar = Math.min(VW, VH) * 0.38;
         var axp = VW / 2 + Math.cos(aa) * ar, ayp = VH / 2 + Math.sin(aa) * ar;
         ctx.save(); ctx.translate(axp, ayp); ctx.rotate(aa); ctx.fillStyle = '#ffe600';
         ctx.beginPath(); ctx.moveTo(14 * u, 0); ctx.lineTo(-8 * u, -9 * u); ctx.lineTo(-8 * u, 9 * u); ctx.closePath(); ctx.fill(); ctx.restore();
@@ -225,7 +226,7 @@ function drawPhone() {
       btn(cx, y, cw, 28 * u, 'GRAPHICS: ' + gfx.mode.toUpperCase(), '#9b5cff', cycleGfx); y += 34 * u;
       btn(cx, y, cw, 28 * u, 'CONTROLS: ' + (usingTouch ? 'TOUCH' : 'KEYS'), '#9b5cff', function () { usingTouch = !usingTouch; }); y += 34 * u;
       btn(cx, y, cw, 28 * u, 'SAVE GAME', '#9b5cff', function () { save(); flash('SAVED', ''); }); y += 34 * u;
-      para('FPS ' + gfx.fps + ' | ' + (gfx.low ? 'top-down' : 'perspective') + ' | host: ' + hostName(), '#aaa');
+      para('FPS ' + gfx.fps + ' | ' + pipeName() + ' | host: ' + hostName(), '#aaa');
     }
   }
 }
@@ -296,7 +297,7 @@ function drawTouch() {
 function render() {
   uiButtons.length = 0;
   ctx.setTransform(RS, 0, 0, RS, 0, 0);
-  renderWorld();
+  if (gfx.p3d) { renderWorld3D(); } else { renderWorld(); }
   drawHUD();
   if (G.phone) { drawPhone(); }
   if (usingTouch && G.over <= 0) { drawTouch(); }

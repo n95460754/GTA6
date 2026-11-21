@@ -130,6 +130,7 @@ function mpDrawHUD() {
     if (!MP.players.hasOwnProperty(id)) { continue; }
     p = MP.players[id];
     sx = (p.x - cam.x) * cam.zoom + VW / 2; sy = (p.y - cam.y) * cam.zoom + VH / 2 - 26 * U;
+    if (gfx.p3d) { var q3 = w2s3(p.x, p.y, 30); if (!q3) { continue; } sx = q3.x; sy = q3.y; }
     if (sx < -50 || sx > VW + 50 || sy < -50 || sy > VH + 50) { continue; }
     text(p.name + (p.w ? ' ' + p.w + '*' : ''), sx, sy, '#2ee59d', 'center');
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - 18 * U, sy + 3 * U, 36 * U, 4 * U);

@@ -45,7 +45,7 @@ function conExec() {
   G.conLog.push('> ' + txt); if (G.conLog.length > 5) { G.conLog.shift(); }
   var w = txt.toUpperCase().replace(/^\s+|\s+$/g, '');
   if (w === 'HELP') { var names = []; for (var k in CHEATS) { if (CHEATS.hasOwnProperty(k)) { names.push(k); } } G.conLog.push(names.join(' ')); }
-  else if (w === 'FPS') { G.conLog.push('FPS ' + gfx.fps + ' pipe=' + (gfx.low ? 'TOPDOWN' : 'PERSPECTIVE') + ' mode=' + gfx.mode); }
+  else if (w === 'FPS') { G.conLog.push('FPS ' + gfx.fps + ' pipe=' + pipeName() + ' mode=' + gfx.mode); }
   else if (!runCheat(w)) { G.conLog.push('Unknown code. Type HELP.'); }
   while (G.conLog.length > 5) { G.conLog.shift(); }
 }

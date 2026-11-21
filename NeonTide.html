@@ -1,0 +1,2363 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0014">
+<title>Neon Tide: Palmetto County</title>
+<!--
+  =====================================================================
+  NEON TIDE: PALMETTO COUNTY
+  An original open-world neon crime sandbox (genre tribute, original
+  characters, setting and content).
+
+  ENGINE CONSTRAINTS (deliberate):
+    * One self-contained file. No images, no audio files, no libraries.
+    * STRICT ES5: var / function / prototypes only. No let, const,
+      arrow functions, classes, promises or template literals.
+    * Canvas 2D only (no WebGL, no Web Audio). All art is procedural.
+    * Bounded memory: every dynamic list has a hard cap (particles,
+      scorch marks, tracers, rockets, spikes, pickups, police).
+
+  HOST WRAPPERS supported by the platform layer (section 1):
+    Browser, Electron, NW.js, Cordova, Capacitor, plain Android WebView.
+    A host can force software/legacy rendering with ?soft=1 or by
+    defining window.NeonTideHost = { softwareRender: true } before load.
+  =====================================================================
+-->
+<style>
+  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#0a0014; }
+  canvas { display:block; position:absolute; left:0; top:0; touch-action:none; -ms-touch-action:none;
+           -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:rgba(0,0,0,0); }
+  #nocanvas { color:#ff3fa4; font:16px monospace; padding:20px; }
+</style>
+</head>
+<body>
+<canvas id="game" width="320" height="480"></canvas>
+<script>
+(function () {
+'use strict';
+
+/* ---- src/engine/00-polyfills-math-utilities.js ---- */
+/* =====================================================================
+   0. POLYFILLS & MATH UTILITIES
+   ===================================================================== */
+var PI = Math.PI, PI2 = Math.PI * 2;
+function now() { return new Date().getTime(); }
+var rafFn = window.requestAnimationFrame || window.webkitRequestAnimationFrame ||
+            window.mozRequestAnimationFrame || window.msRequestAnimationFrame || null;
+function nextFrame(cb) { if (rafFn) { rafFn.call(window, cb); } else { window.setTimeout(cb, 16); } }
+/* Event binding that also works on very old engines (attachEvent). */
+function on(el, ev, fn, opts) {
+  if (el.addEventListener) { el.addEventListener(ev, fn, opts || false); }
+  else if (el.attachEvent) { el.attachEvent('on' + ev, fn); }
+}
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function rnd(a, b) { return a + Math.random() * (b - a); }
+function rndi(a, b) { return Math.floor(rnd(a, b + 1)); }
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function dist(ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return Math.sqrt(dx * dx + dy * dy); }
+function wrapA(a) { while (a > PI) { a -= PI2; } while (a < -PI) { a += PI2; } return a; }
+function pad8(n) { var s = '' + Math.floor(n); while (s.length < 8) { s = '0' + s; } return s; }
+/* Deterministic Park-Miller RNG for world generation (same city every run). */
+var seed = 20261120;
+function srnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+function srndr(a, b) { return a + srnd() * (b - a); }
+
+
+/* ---- src/engine/01-platform-layer-browser-electron-nw-js-co.js ---- */
+/* =====================================================================
+   1. PLATFORM LAYER (browser / Electron / NW.js / Cordova / Capacitor)
+   ===================================================================== */
+var PLATFORM = (function () {
+  var ua = navigator.userAgent || '', q = (window.location && window.location.search) || '';
+  var pr = window.process, p = { ua: ua };
+  p.electron = !!(pr && pr.versions && pr.versions.electron) || ua.indexOf('Electron') >= 0;
+  p.nw = !!(window.nw || (pr && pr.versions && pr.versions['node-webkit']));
+  p.cordova = !!window.cordova;
+  p.capacitor = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  p.android = /Android/i.test(ua);
+  var m = ua.match(/Android\s([0-9]+)/);
+  p.androidMajor = m ? parseInt(m[1], 10) : 0;
+  p.oldWin = /Windows NT 5\./.test(ua) || /Windows NT 6\.[01]/.test(ua);
+  p.host = window.NeonTideHost || {};
+  /* Legacy = start in the cheap top-down pipe with a reduced backbuffer
+     (soft CPU rasterization friendly). Auto-upgrades if FPS allows. */
+  p.legacy = q.indexOf('soft=1') >= 0 || q.indexOf('legacy=1') >= 0 || !!p.host.softwareRender ||
+             (p.android && p.androidMajor > 0 && p.androidMajor < 5) || /Windows NT 5\./.test(ua);
+  p.touch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (navigator.msMaxTouchPoints > 0);
+  return p;
+})();
+
+var canvas = document.getElementById('game');
+if (!canvas || !canvas.getContext) {
+  document.body.innerHTML = '<div id="nocanvas">NEON TIDE needs HTML5 Canvas. On Windows XP use the NW.js 0.14 build or Firefox 52 ESR; on Android use the stock browser (2.x+) or the APK.</div>';
+  return;
+}
+var ctx = canvas.getContext('2d');
+
+
+/* ---- src/engine/02-constants-tuning-tables-global-state.js ---- */
+/* =====================================================================
+   2. CONSTANTS, TUNING TABLES & GLOBAL STATE
+   ===================================================================== */
+var WORLD = 4000, CELL = 400, NB = 10, ROADH = 40;   // 10x10 blocks, roads 80 wide
+var GRAVITY = 900, CAMH = 900;                       // gravity (u/s^2), virtual camera height
+var DX = [1, 0, -1, 0], DY = [0, 1, 0, -1], DANG = [0, PI / 2, PI, -PI / 2];
+
+var CAR_TYPES = {
+  sedan:  { w: 44, h: 22, accel: 230, brake: 520, max: 300, turn: 2.6, mass: 1.0, hp: 100, colors: ['#ff3fa4', '#3ff6ff', '#ffb13b', '#9b5cff', '#f2f2f2', '#2ee59d', '#ff5a36'] },
+  sport:  { w: 46, h: 21, accel: 340, brake: 620, max: 430, turn: 2.9, mass: 0.9, hp: 90,  colors: ['#ff1f6d', '#ffe600', '#00e5ff', '#ff7b00'] },
+  police: { w: 46, h: 22, accel: 330, brake: 620, max: 400, turn: 2.8, mass: 1.2, hp: 130, colors: ['#f4f4f4'] },
+  fbi:    { w: 52, h: 26, accel: 360, brake: 650, max: 380, turn: 2.4, mass: 2.4, hp: 240, colors: ['#121218'] },
+  tank:   { w: 64, h: 38, accel: 140, brake: 400, max: 160, turn: 1.6, mass: 6.0, hp: 1200, colors: ['#5f6b3a'] }
+};
+
+/* Weapon table: ballistics are data driven. */
+var WEAPONS = [
+  { name: 'FISTS',     cd: 0.35, dmg: 14, range: 36,  auto: false, spread: 0,    max: 0 },
+  { name: '9MM PISTOL', cd: 0.26, dmg: 20, range: 540, auto: false, spread: 0.02, max: 300 },
+  { name: 'MICRO SMG', cd: 0.075, dmg: 11, range: 430, auto: true,  spread: 0.13, max: 1200 },
+  { name: 'RPG',       cd: 1.1,  dmg: 0,  range: 0,   auto: false, spread: 0,    max: 40 }
+];
+
+/* Heat thresholds: crime score needed for each star (0..5). */
+var STAR_AT = [0, 8, 40, 90, 160, 260];
+/* Police deployment table indexed by wanted level. */
+var DEPLOY = {
+  cops:  [0, 1, 3, 4, 4, 4],
+  fbi:   [0, 0, 0, 0, 2, 3],
+  tanks: [0, 0, 0, 0, 0, 2]
+};
+
+var CHARS = [
+  { name: 'ROSA VEGA', color: '#ff3fa4', perk: 'TACTICIAN: loses cops faster, harder to cuff' },
+  { name: 'DEX CALLOWAY', color: '#3ff6ff', perk: 'WHEELMAN: +15% handling, +25% gun damage' }
+];
+
+/* Global game state. */
+var G = {
+  t: 0, timeScale: 1, gravMul: 1, tod: 0.78, shake: 0,
+  wanted: 0, heat: 0, lastSeen: 0, bustT: 0, spikeT: 6, spawnT: 0,
+  cash: 2500, score: 0, trust: 50, jobs: 0,
+  over: 0, overText: '', overSub: '', overAction: null,
+  paused: false, hintT: 14, followers: 1200,
+  phone: false, page: 'home', wheel: false, wheelSel: 1,
+  console: false, conText: '', conLog: [], pad: false, padText: '',
+  heist: { run: false, prog: 0, cd: 0 },
+  mission: null, missionIdx: 0, missionDelay: 3, chatterT: 40
+};
+
+var gfx = { mode: 'auto', low: PLATFORM.legacy, fps: 60, frames: 0, acc: 0, goodStreak: 0, pmax: 280 };
+
+/* Entity lists (hard capped). */
+var cars = [], peds = [], rockets = [], tracers = [], pickups = [], spikes = [], scorch = [];
+var buildings = [], blockB = [], palms = [], ponds = [], blockZone = [];
+var parts = [];                     // fixed particle pool, created once
+var PMAX = 280;
+for (var pi0 = 0; pi0 < PMAX; pi0++) {
+  parts.push({ on: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1, size: 1, c: '#fff', type: 0 });
+}
+
+/* Player. */
+var player = {
+  x: 2000, y: 2200, a: -PI / 2, vx: 0, vy: 0, hp: 100, armor: 0, car: null,
+  weap: 1, owned: [true, true, false, false], ammo: [0, 60, 0, 0], fireCd: 0,
+  ch: 0, aim: 0, punchT: 0
+};
+
+/* Named locations (all placed on roads so they are drivable). */
+var LOC = {
+  home:     { x: 2000, y: 2230, name: 'Safehouse' },
+  motel:    { x: 1600, y: 1420, name: 'Pink Lagoon Motel' },
+  garage:   { x: 2180, y: 400,  name: 'Port Coral Garage' },
+  shack:    { x: 400,  y: 3420, name: 'Airboat Shack (Glades)' },
+  hospital: { x: 1200, y: 2420, name: 'Mercy Palms Hospital' },
+  station:  { x: 2800, y: 2380, name: 'Coral Bay PD' },
+  pier:     { x: 4000, y: 1820, name: 'Ocean Drive Pier' }
+};
+
+/* Story chain (original). After it ends, random side jobs are generated. */
+var STORY = [
+  { name: 'Wake-Up Call', from: 'ROSA', text: 'Babe. Pink Lagoon Motel. Now. Bring your A-game.', type: 'goto', loc: 'motel', reward: 2500, trust: 5 },
+  { name: 'Fresh Wheels', from: 'DEX', text: 'We need a getaway ride. Grab any car and drop it at the Port Coral garage.', type: 'deliver', loc: 'garage', reward: 6000, trust: 5 },
+  { name: 'Server Farm', from: 'ROSA', text: 'Open Palmetto OS (P) > HEIST. I wrote the exploit, you press the button.', type: 'heist', reward: 0, trust: 10 },
+  { name: 'Glades Run', from: 'DEX', text: 'Cops smell money. Run the bag to the airboat shack in the Glades.', type: 'goto', loc: 'shack', wanted: 3, reward: 15000, trust: 10 },
+  { name: 'Ghost Mode', from: 'ROSA', text: 'Lay low. Lose every last star and we are home free.', type: 'lose', wanted: 2, reward: 10000, trust: 15 },
+  { name: 'Sunset Pier', from: 'DEX', text: 'Meet me at Ocean Drive pier. Just us, the sunset, and a duffel bag.', type: 'goto', loc: 'pier', reward: 20000, trust: 10 }
+];
+
+var CHATTER = [
+  ['ROSA', 'You drive like the road owes you money.'],
+  ['DEX', 'And you plan like the cops read your diary. Love you.'],
+  ['ROSA', 'Rule one: nobody films us. Rule two: see rule one.'],
+  ['DEX', 'We are trending on FlexTok again. Is that bad?'],
+  ['ROSA', 'Trust is a currency. Do not overspend it.'],
+  ['DEX', 'Swamp gas station sells boiled peanuts AND ammo. Paradise.'],
+  ['ROSA', 'One more score and we buy that boat. For real this time.'],
+  ['DEX', 'If I go down, I am going down at 140 mph.']
+];
+var FEED_HANDLES = ['@gatorcam_77', '@coralbay.chaos', '@neon_nana', '@swampdrone', '@flexking_lc', '@palmetto_pd_watch'];
+var FEED_LINES = ['is this LIVE?? o_O', 'COP SPEEDRUN any%', 'Coral Bay never sleeps', 'who drives like that lmao', 'ratio + five stars',
+  'mom come look', 'this is MY street!!', '#PalmettoMan strikes again', 'followed for the chaos', 'that car was my uncles',
+  'gator got better driving skills', 'NOT the tank omg', 'they are so in love tho', 'clip it clip it', 'hold my boiled peanuts'];
+
+
+/* ---- src/engine/03-screen-resolution-adaptive-scaling.js ---- */
+/* =====================================================================
+   3. SCREEN, RESOLUTION & ADAPTIVE SCALING
+   ===================================================================== */
+var VW = 320, VH = 480, RS = 1, U = 1;
+var sunsetGrad = null;
+function resize() {
+  VW = window.innerWidth || document.documentElement.clientWidth || 320;
+  VH = window.innerHeight || document.documentElement.clientHeight || 480;
+  var dpr = window.devicePixelRatio || 1;
+  RS = gfx.low ? (PLATFORM.legacy ? 0.6 : 1) : Math.min(dpr, 1.5);
+  canvas.width = Math.max(1, Math.floor(VW * RS));
+  canvas.height = Math.max(1, Math.floor(VH * RS));
+  canvas.style.width = VW + 'px';
+  canvas.style.height = VH + 'px';
+  U = clamp(Math.min(VW, VH) / 400, 0.65, 1.6);
+  sunsetGrad = null;
+  layoutTouch();
+}
+
+
+/* ---- src/engine/04-procedural-world-generation-palmetto-cou.js ---- */
+/* =====================================================================
+   4. PROCEDURAL WORLD GENERATION (Palmetto County, 4000x4000)
+   ===================================================================== */
+function zoneOf(bx, by) {
+  if (bx >= 9) { return 'beach'; }
+  if (bx <= 2 && by >= 7) { return 'swamp'; }
+  if (by <= 0) { return 'docks'; }
+  if (bx >= 3 && bx <= 6 && by >= 3 && by <= 6) { return 'strip'; }
+  return 'suburb';
+}
+var ZONE_COL = {
+  strip:  { g: '#2a0f3d', s: '#5a2a7a', edge: '#ff3fa4' },
+  suburb: { g: '#2f5e3d', s: '#8d8379', edge: '#c9b8a6' },
+  beach:  { g: '#e6c98a', s: '#d8b877', edge: '#fff1c1' },
+  swamp:  { g: '#23402a', s: '#4a5a3a', edge: '#6f8a4e' },
+  docks:  { g: '#4b4b57', s: '#6b6b78', edge: '#ffb13b' }
+};
+var NEON = ['#ff3fa4', '#3ff6ff', '#9b5cff', '#ff8a1f', '#ffe600', '#2ee59d'];
+
+function addBuilding(x, y, w, h, ht, c, roof, neon, bi) {
+  var b = { x: x, y: y, w: w, h: h, ht: ht, c: c, roof: roof, neon: neon };
+  buildings.push(b);
+  blockB[bi].push(b);
+}
+
+function genWorld() {
+  var bx, by, i, j;
+  for (i = 0; i < NB * NB; i++) { blockB.push([]); }
+  for (by = 0; by < NB; by++) {
+    for (bx = 0; bx < NB; bx++) {
+      var bi = by * NB + bx, z = zoneOf(bx, by);
+      var ox = bx * CELL + 60, oy = by * CELL + 60, S = 280;
+      blockZone[bi] = z;
+      if (z === 'strip') {
+        /* 2x2 lots of neon towers with random heights */
+        for (j = 0; j < 4; j++) {
+          if (srnd() < 0.15) { continue; }
+          var lx = ox + (j % 2) * 145, ly = oy + Math.floor(j / 2) * 145;
+          var ht = srndr(160, 430), nc = NEON[Math.floor(srnd() * NEON.length)];
+          var shade = Math.floor(srndr(30, 70));
+          addBuilding(lx, ly, srndr(100, 135), srndr(100, 135), ht,
+            'rgb(' + (shade + 30) + ',' + shade + ',' + (shade + 60) + ')', '#1c1030', nc, bi);
+        }
+      } else if (z === 'suburb') {
+        for (j = 0; j < 4; j++) {
+          var hx = ox + (j % 2) * 150 + 15, hy = oy + Math.floor(j / 2) * 150 + 15;
+          if (srnd() < 0.2) { palms.push({ x: hx + 50, y: hy + 50, s: srndr(0.8, 1.2) }); continue; }
+          var pastel = pick2(['#f7c6d9', '#c6f0f7', '#f7eac6', '#d9c6f7', '#c6f7d4']);
+          addBuilding(hx, hy, srndr(80, 110), srndr(80, 110), srndr(40, 75), pastel, pick2(['#b8556e', '#5577b8', '#b88955', '#7a55b8']), null, bi);
+          palms.push({ x: hx - 4, y: hy + 120, s: srndr(0.7, 1.1) });
+        }
+      } else if (z === 'docks') {
+        for (j = 0; j < 6; j++) {
+          var cx = ox + (j % 2) * 150, cy = oy + Math.floor(j / 2) * 95 + 5;
+          addBuilding(cx, cy, 125, 40, 38, pick2(['#c0392b', '#2980b9', '#27ae60', '#e67e22', '#8e44ad']), '#333', null, bi);
+        }
+      } else if (z === 'beach') {
+        if (srnd() < 0.6) { addBuilding(ox + 110, oy + 110, 50, 50, 30, '#ffb3d1', '#ff3fa4', '#3ff6ff', bi); }
+        for (j = 0; j < 7; j++) { palms.push({ x: ox + srndr(0, S), y: oy + srndr(0, S), s: srndr(0.8, 1.3) }); }
+      } else { /* swamp */
+        for (j = 0; j < 3; j++) { ponds.push({ x: ox + srndr(40, S - 40), y: oy + srndr(40, S - 40), r: srndr(35, 70), bi: bi }); }
+        if (srnd() < 0.5) { addBuilding(ox + 20, oy + 200, 60, 45, 28, '#6b5a3a', '#3e3424', null, bi); }
+        for (j = 0; j < 5; j++) { palms.push({ x: ox + srndr(0, S), y: oy + srndr(0, S), s: srndr(0.6, 1.0), mangrove: true }); }
+      }
+    }
+  }
+  buildMinimap();
+}
+function pick2(arr) { return arr[Math.floor(srnd() * arr.length)]; }
+
+/* Spatial queries ------------------------------------------------------ */
+function isRoad(x, y) {
+  if (x < -ROADH || y < -ROADH || x > WORLD + ROADH || y > WORLD + ROADH) { return false; }
+  var mx = ((x % CELL) + CELL) % CELL, my = ((y % CELL) + CELL) % CELL;
+  return mx < ROADH || mx > CELL - ROADH || my < ROADH || my > CELL - ROADH;
+}
+function blockList(x, y) {
+  var bx = Math.floor(x / CELL), by = Math.floor(y / CELL);
+  if (bx < 0 || by < 0 || bx >= NB || by >= NB) { return null; }
+  return blockB[by * NB + bx];
+}
+function inBuilding(x, y) {
+  var L = blockList(x, y), i, b;
+  if (!L) { return null; }
+  for (i = 0; i < L.length; i++) { b = L[i]; if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) { return b; } }
+  return null;
+}
+function inPond(x, y) {
+  for (var i = 0; i < ponds.length; i++) { var p = ponds[i]; var dx = x - p.x, dy = y - p.y; if (dx * dx + dy * dy < p.r * p.r) { return true; } }
+  return false;
+}
+/* Circle vs building push-out. Entities only need their own block,
+   because buildings are inset 60u from block edges (> max radius). */
+function pushOut(e, r, z) {
+  var L = blockList(e.x, e.y), hit = false, i, b;
+  if (L) {
+    for (i = 0; i < L.length; i++) {
+      b = L[i];
+      if (z && z > b.ht) { continue; }          // airborne over a low roof
+      var nx = clamp(e.x, b.x, b.x + b.w), ny = clamp(e.y, b.y, b.y + b.h);
+      var dx = e.x - nx, dy = e.y - ny, d2 = dx * dx + dy * dy;
+      if (d2 < r * r) {
+        hit = true;
+        if (d2 > 0.0001) { var d = Math.sqrt(d2); e.x += dx / d * (r - d); e.y += dy / d * (r - d); }
+        else {
+          var l = e.x - b.x, rr = b.x + b.w - e.x, t = e.y - b.y, bt = b.y + b.h - e.y, m = Math.min(l, rr, t, bt);
+          if (m === l) { e.x = b.x - r; } else if (m === rr) { e.x = b.x + b.w + r; } else if (m === t) { e.y = b.y - r; } else { e.y = b.y + b.h + r; }
+        }
+      }
+    }
+  }
+  /* World boundaries (ocean / county line). */
+  if (e.x < -30) { e.x = -30; hit = true; } if (e.x > WORLD + 30) { e.x = WORLD + 30; hit = true; }
+  if (e.y < -30) { e.y = -30; hit = true; } if (e.y > WORLD + 30) { e.y = WORLD + 30; hit = true; }
+  return hit;
+}
+/* Coarse ray march against buildings. Returns travelled fraction 0..1. */
+function rayFrac(x1, y1, x2, y2) {
+  var d = dist(x1, y1, x2, y2), n = Math.max(1, Math.ceil(d / 10)), i;
+  for (i = 1; i <= n; i++) {
+    var f = i / n;
+    if (inBuilding(x1 + (x2 - x1) * f, y1 + (y2 - y1) * f)) { return (i - 1) / n; }
+  }
+  return 1;
+}
+function los(x1, y1, x2, y2) { return rayFrac(x1, y1, x2, y2) >= 1; }
+
+
+/* ---- src/engine/05-entities-cars-prototype-pedestrians-part.js ---- */
+/* =====================================================================
+   5. ENTITIES: CARS (prototype), PEDESTRIANS, PARTICLES
+   ===================================================================== */
+function Car(type, x, y, a) {
+  var T = CAR_TYPES[type];
+  this.type = type; this.T = T; this.x = x; this.y = y; this.a = a || 0; this.v = 0;
+  this.z = 0; this.vz = 0; this.spin = 0; this.hp = T.hp; this.w = T.w; this.h = T.h;
+  this.r = (T.w + T.h) / 4; this.mass = T.mass; this.accelMul = 1; this.maxMul = 1; this.popped = false;
+  this.color = T.colors[Math.floor(Math.random() * T.colors.length)];
+  this.ai = 'civ'; this.role = ''; this.slot = 0; this.mode = 'cruise'; this.modeT = 0; this.cruise = rnd(120, 175);
+  this.dir = 0; this.nx = 0; this.ny = 0; this.tnx = 0; this.tny = 0; this.wpx = -1; this.wpy = -1;
+  this.thr = 0; this.str = 0; this.hb = false; this.stuckT = 0; this.revT = 0;
+  this.fireCd = rnd(0.8, 2); this.turretA = this.a; this.burnT = -1; this.dead = false; this.deadT = 0;
+}
+/* Arcade vehicle physics with sub-stepping for fast (TURBO) cars. */
+Car.prototype.drive = function (dt) {
+  var T = this.T, perk = (this === player.car && player.ch === 1) ? 1.15 : 1;
+  var acc = T.accel * this.accelMul * perk, max = T.max * this.maxMul * (this.popped ? 0.45 : 1) * perk;
+  var grounded = this.z < 2;
+  if (this.dead) { this.thr = 0; this.str = 0; }
+  if (grounded) {
+    if (this.thr > 0) { this.v += acc * this.thr * dt; }
+    else if (this.thr < 0) { if (this.v > 0) { this.v -= T.brake * dt; } else { this.v -= acc * 0.6 * dt; } }
+    var drag = this.hb ? 2.0 : 0.55; if (this.thr === 0) { drag += 0.9; }
+    if (inPond(this.x, this.y)) { drag += 2.5; }
+    this.v -= this.v * drag * dt;
+  }
+  if (this.v > max) { this.v = max; } if (this.v < -max * 0.4) { this.v = -max * 0.4; }
+  var grip = clamp(Math.abs(this.v) / 90, 0, 1) * (this.v < 0 ? -1 : 1);
+  if (grounded) { this.a += this.str * T.turn * perk * (this.hb ? 1.5 : 1) * grip * dt; }
+  this.a = wrapA(this.a + this.spin * dt);
+  this.spin -= this.spin * 2.5 * dt;
+  /* sub-steps keep 4x TURBO cars from tunnelling through walls */
+  var steps = Math.max(1, Math.ceil(Math.abs(this.v) * dt / 12)), s, sdt = dt / steps, vb = this.v;
+  for (s = 0; s < steps; s++) {
+    this.x += Math.cos(this.a) * this.v * sdt;
+    this.y += Math.sin(this.a) * this.v * sdt;
+    if (pushOut(this, this.r, this.z)) {
+      if (Math.abs(vb) > 90) { this.damage(Math.abs(vb) * 0.05, null); sparks(this.x, this.y, 4); }
+      this.v = -this.v * 0.25; break;
+    }
+  }
+  /* vertical (air time after explosions / ramps). Uses global gravity multiplier. */
+  if (this.z > 0 || this.vz !== 0) {
+    this.vz -= GRAVITY * G.gravMul * dt; this.z += this.vz * dt;
+    if (this.z <= 0) {
+      this.z = 0;
+      if (this.vz < -150) { this.vz = -this.vz * 0.35; this.damage(6, null); debris(this.x, this.y, 4, this.color); }
+      else { this.vz = 0; }
+    }
+  }
+  /* burning wreck countdown -> explosion */
+  if (this.burnT > 0) {
+    this.burnT -= dt;
+    if (Math.random() < 0.6) { addP(this.x + rnd(-8, 8), this.y + rnd(-6, 6), rnd(-20, 20), rnd(-30, -5), rnd(0.3, 0.7), rnd(4, 8), pick(['#ff8a1f', '#ffe600', '#ff3b1f']), 0); }
+    if (this.burnT <= 0) { this.burnT = -1; explode(this.x, this.y, this.killer || null); }
+  }
+  if (this.dead) { this.deadT += dt; }
+};
+Car.prototype.damage = function (d, by) {
+  if (this.dead) { return; }
+  this.hp -= d;
+  if (by === 'player' && this.role) { crime(3); }
+  if (this.hp <= 0) {
+    this.hp = 0; this.dead = true; this.burnT = 2.2; this.killer = by;
+    if (by === 'player') { crime(this.role ? 25 : 10); G.score += 50; }
+  }
+};
+
+function Ped(x, y) {
+  this.x = x; this.y = y; this.a = rnd(0, PI2); this.hp = 30; this.state = 'walk';
+  this.t = rnd(1, 4); this.sp = rnd(28, 48); this.dead = false; this.deadT = 0; this.fx = 0; this.fy = 0;
+  this.color = pick(['#ffd1a6', '#c68642', '#8d5524', '#f1c27d', '#e0ac69']);
+  this.shirt = pick(['#ff3fa4', '#3ff6ff', '#ffe600', '#ffffff', '#2ee59d', '#ff8a1f', '#9b5cff']);
+}
+function pedBlocked(x, y, allowRoad) {
+  return !!inBuilding(x, y) || (!allowRoad && isRoad(x, y)) || x < 0 || y < 0 || x > WORLD || y > WORLD;
+}
+Ped.prototype.update = function (dt) {
+  if (this.dead) { this.deadT += dt; return; }
+  var sp = this.sp;
+  if (this.state === 'flee') {
+    sp = 135; this.t -= dt;
+    this.a = Math.atan2(this.y - this.fy, this.x - this.fx) + Math.sin(G.t * 3 + this.x) * 0.4;
+    if (this.t <= 0) { this.state = 'walk'; this.t = rnd(2, 4); }
+  } else {
+    this.t -= dt;
+    if (this.t <= 0) { this.a += rnd(-1.3, 1.3); this.t = rnd(2, 5); }
+  }
+  var nx = this.x + Math.cos(this.a) * sp * dt, ny = this.y + Math.sin(this.a) * sp * dt;
+  if (pedBlocked(nx, ny, this.state === 'flee')) { this.a += PI * 0.5 + rnd(0, PI); }
+  else { this.x = nx; this.y = ny; }
+};
+Ped.prototype.kill = function (by, ang) {
+  if (this.dead) { return; }
+  this.dead = true; this.hp = 0;
+  /* ragdoll particle burst */
+  for (var i = 0; i < (gfx.low ? 5 : 12); i++) {
+    var a = (ang === undefined ? rnd(0, PI2) : ang + rnd(-0.8, 0.8)), s = rnd(60, 220);
+    addP(this.x, this.y, Math.cos(a) * s, Math.sin(a) * s, rnd(0.4, 0.9), rnd(2, 4), i % 3 ? '#c8102e' : this.shirt, 3);
+  }
+  /* physical cash drop */
+  if (pickups.length < 40) { pickups.push({ x: this.x + rnd(-6, 6), y: this.y + rnd(-6, 6), amt: rndi(20, 260), t: 0 }); }
+  if (by === 'player') { crime(12); G.score += 10; }
+  noise(this.x, this.y, 300);
+};
+
+/* Particle pool --------------------------------------------------------
+   types: 0 fire/spark (shrink+fade), 1 smoke (grow+fade), 3 debris (z physics), 4 flash */
+var pCursor = 0;
+function addP(x, y, vx, vy, life, size, c, type) {
+  var lim = gfx.low ? 90 : PMAX, i, p = null;
+  for (i = 0; i < lim; i++) { var q = parts[(pCursor + i) % lim]; if (!q.on) { p = q; pCursor = (pCursor + i + 1) % lim; break; } }
+  if (!p) { p = parts[pCursor % lim]; pCursor = (pCursor + 1) % lim; }
+  p.on = true; p.x = x; p.y = y; p.z = 0; p.vx = vx; p.vy = vy; p.life = life; p.max = life; p.size = size; p.c = c; p.type = type;
+  p.vz = type === 3 ? rnd(120, 320) : 0;
+}
+function sparks(x, y, n) { for (var i = 0; i < n; i++) { addP(x, y, rnd(-150, 150), rnd(-150, 150), rnd(0.1, 0.3), 2, '#ffe600', 0); } }
+function debris(x, y, n, c) { for (var i = 0; i < n; i++) { addP(x, y, rnd(-120, 120), rnd(-120, 120), rnd(1.2, 2.4), rnd(2, 4), c, 3); } }
+
+
+/* ---- src/engine/06-notifications-flash-messages-social-feed.js ---- */
+/* =====================================================================
+   6. NOTIFICATIONS, FLASH MESSAGES, SOCIAL FEED
+   ===================================================================== */
+var toasts = [], flashMsg = { t: 0, a: '', b: '' };
+var feed = { t: 0, cd: 0, viewers: 0, handle: '', lines: [], lineT: 0, reason: '' };
+function notify(from, text, color) {
+  toasts.push({ from: from, text: text, c: color || (from === 'ROSA' ? '#ff3fa4' : (from === 'DEX' ? '#3ff6ff' : '#ffe600')), t: 6 });
+  if (toasts.length > 3) { toasts.shift(); }
+}
+function flash(a, b) { flashMsg.t = 3; flashMsg.a = a; flashMsg.b = b || ''; }
+function feedTrigger(reason) {
+  if (feed.cd > 0) { return; }
+  feed.t = 8; feed.cd = 16; feed.reason = reason; feed.handle = pick(FEED_HANDLES);
+  feed.viewers = rndi(800, 4000) + G.wanted * 3000; feed.lines = [pick(FEED_LINES)]; feed.lineT = 0.6;
+  G.followers += rndi(50, 400);
+}
+
+
+/* ---- src/engine/07-heat-index-wanted-level-crime.js ---- */
+/* =====================================================================
+   7. HEAT INDEX (WANTED LEVEL) & CRIME
+   ===================================================================== */
+function crime(points) {
+  G.heat = Math.min(STAR_AT[5] + 40, G.heat + points);
+  var w = 0, i;
+  for (i = 5; i >= 1; i--) { if (G.heat >= STAR_AT[i]) { w = i; break; } }
+  if (w > G.wanted) { setWanted(w); }
+  G.lastSeen = G.t;
+}
+function setWanted(w) {
+  w = clamp(w, 0, 5);
+  var prev = G.wanted;
+  G.wanted = w; G.heat = Math.max(G.heat, STAR_AT[w]); if (w === 0) { G.heat = 0; }
+  G.lastSeen = G.t;
+  if (w > prev) {
+    if (w >= 2) { feedTrigger('PURSUIT'); }
+    if (w === 5) { flash('5 STARS', 'MILITARY RESPONSE INBOUND'); }
+  }
+}
+function clearPolice() {
+  for (var i = cars.length - 1; i >= 0; i--) { if (cars[i].role && cars[i] !== player.car) { cars.splice(i, 1); } }
+  spikes.length = 0;
+}
+
+
+/* ---- src/engine/08-combat-hitscan-projectiles-explosions.js ---- */
+/* =====================================================================
+   8. COMBAT: HITSCAN, PROJECTILES, EXPLOSIONS
+   ===================================================================== */
+/* Analytic ray vs circle tests against cars, peds and player; buildings by ray march. */
+function hitscan(x, y, ang, range, dmg, owner, ownerCar, color) {
+  var cx = Math.cos(ang), cy = Math.sin(ang), bestT = range * rayFrac(x, y, x + cx * range, y + cy * range);
+  var best = null, kind = '', i, e, t, px, py, r;
+  for (i = 0; i < cars.length; i++) {
+    e = cars[i]; if (e === ownerCar) { continue; }
+    px = e.x - x; py = e.y - y; t = px * cx + py * cy; if (t < 0 || t > bestT) { continue; }
+    r = e.r; if (Math.abs(px * cy - py * cx) < r) { bestT = t; best = e; kind = 'car'; }
+  }
+  for (i = 0; i < peds.length; i++) {
+    e = peds[i]; if (e.dead) { continue; }
+    px = e.x - x; py = e.y - y; t = px * cx + py * cy; if (t < 0 || t > bestT) { continue; }
+    if (Math.abs(px * cy - py * cx) < 9) { bestT = t; best = e; kind = 'ped'; }
+  }
+  if (owner !== 'player' && !player.car) {
+    px = player.x - x; py = player.y - y; t = px * cx + py * cy;
+    if (t > 0 && t < bestT && Math.abs(px * cy - py * cx) < 10) { bestT = t; best = player; kind = 'player'; }
+  }
+  if (owner === 'player' && MP.on) {          /* PvP: remote players on the ray */
+    var mt = mpRayHit(x, y, cx, cy, bestT, dmg);
+    if (mt >= 0) { bestT = mt; best = null; kind = 'net'; }
+  }
+  var ex = x + cx * bestT, ey = y + cy * bestT;
+  if (owner === 'player') { mpEmit({ t: 'shot', x1: Math.round(x), y1: Math.round(y), x2: Math.round(ex), y2: Math.round(ey) }); }
+  if (tracers.length < 40) { tracers.push({ x1: x, y1: y, x2: ex, y2: ey, t: 0.07, c: color || '#ffe600' }); }
+  if (kind === 'car') { best.damage(dmg * 0.6, owner); sparks(ex, ey, 3); if (best.ai === 'civ') { fleeCar(best, x, y); } if (best === player.car) { hurtPlayer(dmg * 0.15); } }
+  else if (kind === 'ped') { best.hp -= dmg; if (best.hp <= 0) { best.kill(owner, ang); } else { best.state = 'flee'; best.t = 6; best.fx = x; best.fy = y; } }
+  else if (kind === 'player') { hurtPlayer(dmg); addP(ex, ey, 0, 0, 0.3, 4, '#c8102e', 0); }
+  else if (bestT < range) { sparks(ex, ey, 2); }
+  noise(x, y, 450);
+  if (owner === 'player') { crime(1); }
+}
+function fireRocket(x, y, a, owner, ownerCar, kind) {
+  if (rockets.length >= 16) { return; }
+  rockets.push({ x: x, y: y, a: a, v: kind === 'shell' ? 650 : 520, t: 0, owner: owner, car: ownerCar, kind: kind });
+}
+function explode(x, y, owner) {
+  var R = 150, i, e, d, f;
+  if (owner === 'player') { mpEmit({ t: 'boom', x: Math.round(x), y: Math.round(y) }); }
+  for (i = 0; i < cars.length; i++) {
+    e = cars[i]; d = dist(x, y, e.x, e.y);
+    if (d < R) {
+      f = 1 - d / R;
+      e.damage(150 * f / (e.type === 'tank' ? 4 : 1), owner);
+      e.vz += 300 * f / Math.sqrt(e.mass); e.z = Math.max(e.z, 1);
+      e.spin += rnd(-5, 5) * f; e.v *= 0.4;
+      if (d > 1) { e.x += (e.x - x) / d * 18 * f; e.y += (e.y - y) / d * 18 * f; }
+    }
+  }
+  for (i = 0; i < peds.length; i++) {
+    e = peds[i]; if (e.dead) { continue; } d = dist(x, y, e.x, e.y);
+    if (d < R * 0.8) { e.kill(owner, Math.atan2(e.y - y, e.x - x)); }
+    else if (d < 500) { e.state = 'flee'; e.t = 7; e.fx = x; e.fy = y; }
+  }
+  d = dist(x, y, player.x, player.y);
+  if (d < R) { hurtPlayer(player.car ? 25 * (1 - d / R) : 95 * (1 - d / R)); }
+  var nf = gfx.low ? 6 : 18, ns = gfx.low ? 3 : 10;
+  for (i = 0; i < nf; i++) { var a = rnd(0, PI2), s = rnd(40, 260); addP(x, y, Math.cos(a) * s, Math.sin(a) * s, rnd(0.3, 0.9), rnd(6, 14), pick(['#ffe600', '#ff8a1f', '#ff3b1f', '#ffffff']), 0); }
+  for (i = 0; i < ns; i++) { addP(x + rnd(-30, 30), y + rnd(-30, 30), rnd(-30, 30), rnd(-40, 10), rnd(1.2, 2.4), rnd(10, 22), '#3a3344', 1); }
+  debris(x, y, gfx.low ? 3 : 8, '#555');
+  addP(x, y, 0, 0, 0.15, 90, '#fff6c0', 4);
+  scorch.push({ x: x, y: y, r: rnd(45, 65) }); if (scorch.length > 40) { scorch.shift(); }
+  G.shake = Math.min(1, G.shake + 0.6);
+  noise(x, y, 650);
+  if (owner === 'player') { crime(15); feedTrigger('EXPLOSION'); G.score += 25; }
+}
+function hurtPlayer(d) {
+  if (G.over > 0) { return; }
+  var ab = Math.min(player.armor, d * 0.7);
+  player.armor -= ab; player.hp -= (d - ab);
+  if (player.hp <= 0) { player.hp = 0; die(); }
+}
+/* Gunshots / explosions make traffic flee and pedestrians scatter. */
+function noise(x, y, r) {
+  var i, e;
+  for (i = 0; i < cars.length; i++) { e = cars[i]; if (e.ai === 'civ' && dist(x, y, e.x, e.y) < r) { fleeCar(e, x, y); } }
+  for (i = 0; i < peds.length; i++) { e = peds[i]; if (!e.dead && dist(x, y, e.x, e.y) < r * 0.8) { e.state = 'flee'; e.t = 6; e.fx = x; e.fy = y; } }
+}
+function fleeCar(c, x, y) { c.mode = 'flee'; c.modeT = 7; }
+
+/* Player weapon fire */
+function playerFire(pressed) {
+  if (player.fireCd > 0 || G.over > 0) { return; }
+  var c = player.car, w = WEAPONS[player.weap], x, y, a = player.aim;
+  if (c && c.type === 'tank') {
+    if (!pressed) { return; }
+    var ta = c.turretA; fireRocket(c.x + Math.cos(ta) * 44, c.y + Math.sin(ta) * 44, ta, 'player', c, 'shell');
+    player.fireCd = 0.9; addP(c.x + Math.cos(ta) * 46, c.y + Math.sin(ta) * 46, 0, 0, 0.08, 18, '#fff6c0', 4); return;
+  }
+  if (!w.auto && !pressed) { return; }
+  if (player.weap > 0 && player.ammo[player.weap] <= 0) { notify('SYSTEM', 'Out of ammo. Press Q for the weapon wheel.', '#ffe600'); player.fireCd = 0.6; return; }
+  if (c) { a = c.a; x = c.x + Math.cos(a) * (c.w * 0.6); y = c.y + Math.sin(a) * (c.w * 0.6); if (player.weap === 0) { return; } }
+  else { x = player.x + Math.cos(a) * 10; y = player.y + Math.sin(a) * 10; player.a = a; }
+  player.fireCd = w.cd;
+  var mul = player.ch === 1 ? 1.25 : 1;
+  if (player.weap === 0) {          /* MELEE: short collision check + pushback, no ammo */
+    player.punchT = 0.15;
+    for (var i = 0; i < peds.length; i++) {
+      var p = peds[i]; if (p.dead) { continue; }
+      if (dist(x, y, p.x, p.y) < w.range) {
+        p.hp -= w.dmg * mul; p.x += Math.cos(a) * 14; p.y += Math.sin(a) * 14;
+        if (p.hp <= 0) { p.kill('player', a); } else { p.state = 'flee'; p.t = 5; p.fx = x; p.fy = y; crime(2); }
+        break;
+      }
+    }
+    return;
+  }
+  player.ammo[player.weap]--;
+  if (player.weap === 3) {          /* RPG: physical projectile */
+    fireRocket(x, y, a, 'player', c, 'rpg'); addP(x, y, 0, 0, 0.08, 16, '#fff6c0', 4); return;
+  }
+  /* PISTOL (precise laser trace) / SMG (spread) */
+  addP(x + Math.cos(a) * 6, y + Math.sin(a) * 6, 0, 0, 0.05, player.weap === 1 ? 9 : 7, '#fff6c0', 4);
+  hitscan(x, y, a + rnd(-w.spread, w.spread), w.range, w.dmg * mul, 'player', c, player.weap === 1 ? '#ff3fa4' : '#ffe600');
+}
+
+
+/* ---- src/engine/09-traffic-ai-road-graph-lane-following-fle.js ---- */
+/* =====================================================================
+   9. TRAFFIC AI (road-graph lane following + flee state)
+   ===================================================================== */
+function validDirs(ix, iy, from) {
+  var out = [], d;
+  for (d = 0; d < 4; d++) {
+    var tx = ix + DX[d], ty = iy + DY[d];
+    if (tx < 0 || ty < 0 || tx > NB || ty > NB) { continue; }
+    if (from >= 0 && d === (from + 2) % 4) { continue; }
+    out.push(d);
+  }
+  if (!out.length) { out.push((from + 2) % 4); }
+  return out;
+}
+function routeFrom(c, ix, iy, from) {
+  c.nx = ix; c.ny = iy; c.dir = pick(validDirs(ix, iy, from)); c.tnx = ix + DX[c.dir]; c.tny = iy + DY[c.dir];
+}
+function placeOnRoad(c, ix, iy) {
+  routeFrom(c, ix, iy, -1);
+  c.x = ix * CELL + (-DY[c.dir]) * 20 + DX[c.dir] * 50; c.y = iy * CELL + DX[c.dir] * 20 + DY[c.dir] * 50; c.a = DANG[c.dir];
+}
+function seek(c, tx, ty, throttleSpeed) {
+  var diff = wrapA(Math.atan2(ty - c.y, tx - c.x) - c.a);
+  c.str = clamp(diff * 2.6, -1, 1);
+  var want = throttleSpeed * (Math.abs(diff) > 0.6 ? 0.55 : 1);
+  c.thr = c.v < want ? 1 : 0;
+  return diff;
+}
+function unstick(c, dt) {
+  if (c.revT > 0) { c.revT -= dt; c.thr = -1; c.str = -c.str; return true; }
+  if (Math.abs(c.v) < 15 && c.thr > 0) { c.stuckT += dt; } else { c.stuckT = 0; }
+  if (c.stuckT > 1.3) { c.stuckT = 0; c.revT = 0.9; c.str = rnd(-1, 1) > 0 ? 1 : -1; }
+  return false;
+}
+function civAI(c, dt) {
+  if (c.dead) { return; }
+  if (c.mode === 'flee') { c.modeT -= dt; if (c.modeT <= 0) { c.mode = 'cruise'; } }
+  var dx = DX[c.dir], dy = DY[c.dir], rx = -dy, ry = dx;
+  var tx = c.tnx * CELL + rx * 20, ty = c.tny * CELL + ry * 20;
+  /* passed the node along travel axis -> pick next direction at the intersection */
+  if ((tx - c.x) * dx + (ty - c.y) * dy < 12) { routeFrom(c, c.tnx, c.tny, c.dir); return; }
+  seek(c, tx, ty, c.mode === 'flee' ? 330 : c.cruise);
+  if (unstick(c, dt)) { return; }
+  if (c.mode !== 'flee') {
+    /* brake for cars / player in front */
+    var fx = Math.cos(c.a), fy = Math.sin(c.a), i, o;
+    for (i = 0; i < cars.length; i++) {
+      o = cars[i]; if (o === c) { continue; }
+      var ox = o.x - c.x, oy = o.y - c.y, d = Math.abs(ox) + Math.abs(oy);
+      if (d < 75 && (ox * fx + oy * fy) > d * 0.6) { c.thr = c.v > 20 ? -1 : 0; break; }
+    }
+    if (!player.car) { var px = player.x - c.x, py = player.y - c.y, pd = Math.abs(px) + Math.abs(py); if (pd < 60 && (px * fx + py * fy) > pd * 0.6) { c.thr = c.v > 10 ? -1 : 0; } }
+  }
+}
+
+
+/* ---- src/engine/10-police-director-state-machine-scaled-by-.js ---- */
+/* =====================================================================
+   10. POLICE DIRECTOR (state machine scaled by heat index)
+   ===================================================================== */
+function playerPos() {
+  var c = player.car;
+  if (c) { return { x: c.x, y: c.y, vx: Math.cos(c.a) * c.v, vy: Math.sin(c.a) * c.v, a: c.a }; }
+  return { x: player.x, y: player.y, vx: player.vx, vy: player.vy, a: player.a };
+}
+/* Cognitive pathing: if a building blocks the direct line, route through
+   the road grid one intersection at a time toward the target. */
+function navTarget(c, tx, ty) {
+  if (los(c.x, c.y, tx, ty)) { c.wpx = -1; return { x: tx, y: ty }; }
+  if (c.wpx < 0 || dist(c.x, c.y, c.wpx * CELL, c.wpy * CELL) < 45) {
+    var ix = clamp(Math.round(c.x / CELL), 0, NB), iy = clamp(Math.round(c.y / CELL), 0, NB);
+    var gx = tx - ix * CELL, gy = ty - iy * CELL;
+    if (dist(c.x, c.y, ix * CELL, iy * CELL) > 60) { c.wpx = ix; c.wpy = iy; }
+    else if (Math.abs(gx) > Math.abs(gy)) { c.wpx = clamp(ix + (gx > 0 ? 1 : -1), 0, NB); c.wpy = iy; }
+    else { c.wpx = ix; c.wpy = clamp(iy + (gy > 0 ? 1 : -1), 0, NB); }
+  }
+  return { x: c.wpx * CELL, y: c.wpy * CELL };
+}
+function policeAI(c, dt) {
+  if (c.dead) { return; }
+  var P = playerPos(), d = dist(c.x, c.y, P.x, P.y), tx = P.x, ty = P.y, speed = c.T.max, t, side;
+  if (G.wanted === 0) { c.ai = 'civ'; c.mode = 'cruise'; routeFrom(c, clamp(Math.round(c.x / CELL), 0, NB), clamp(Math.round(c.y / CELL), 0, NB), -1); return; }
+  if (c.role === 'cop') {
+    if (G.wanted === 1) {                      /* 1 star: tail at a safe distance, no shooting */
+      speed = d > 280 ? c.T.max * 0.8 : (d < 170 ? 0 : Math.max(60, Math.sqrt(P.vx * P.vx + P.vy * P.vy)));
+    } else if (c.slot < 3) {                   /* 2+ stars: boxing formation ahead / left / right */
+      side = [0, -1, 1][c.slot];
+      tx = P.x + Math.cos(P.a) * (side === 0 ? 120 : 30) + Math.cos(P.a + PI / 2) * side * 70;
+      ty = P.y + Math.sin(P.a) * (side === 0 ? 120 : 30) + Math.sin(P.a + PI / 2) * side * 70;
+      if (d > 300) { tx = P.x; ty = P.y; }
+    }
+    if (G.wanted >= 3) {                       /* 3+ stars: shooting intervals */
+      c.fireCd -= dt;
+      if (c.fireCd <= 0 && d < 420 && los(c.x, c.y, P.x, P.y)) {
+        c.fireCd = rnd(0.9, 1.6);
+        hitscan(c.x, c.y, Math.atan2(P.y - c.y, P.x - c.x) + rnd(-0.12, 0.12), 460, 6, 'police', c, '#3ff6ff');
+      }
+    }
+  } else if (c.role === 'fbi') {               /* 4 stars: heavy ramming with intercept prediction */
+    tx = P.x + P.vx * 0.5; ty = P.y + P.vy * 0.5; c.accelMul = 1.3;
+  } else if (c.role === 'tank') {              /* 5 stars: blockade ring + shells */
+    var ang = c.slot * PI + G.t * 0.05;
+    tx = P.x + Math.cos(ang) * 320; ty = P.y + Math.sin(ang) * 320;
+    if (dist(c.x, c.y, tx, ty) < 70) { speed = 0; }
+    var want = Math.atan2(P.y - c.y, P.x - c.x), td = wrapA(want - c.turretA);
+    c.turretA = wrapA(c.turretA + clamp(td, -1.4 * dt, 1.4 * dt));
+    c.fireCd -= dt;
+    if (c.fireCd <= 0 && d < 520 && Math.abs(td) < 0.15 && los(c.x, c.y, P.x, P.y)) {
+      c.fireCd = 3.2; fireRocket(c.x + Math.cos(c.turretA) * 44, c.y + Math.sin(c.turretA) * 44, c.turretA, 'police', c, 'shell');
+    }
+  }
+  t = navTarget(c, tx, ty);
+  seek(c, t.x, t.y, speed);
+  if (speed === 0 && c.v > 5) { c.thr = -1; }
+  unstick(c, dt);
+}
+function spawnPolice(role, slot) {
+  var P = playerPos(), tries, a, x, y;
+  for (tries = 0; tries < 8; tries++) {
+    a = rnd(0, PI2); x = P.x + Math.cos(a) * rnd(700, 950); y = P.y + Math.sin(a) * rnd(700, 950);
+    x = clamp(x, 0, WORLD); y = clamp(y, 0, WORLD);
+    /* snap onto the nearest road line */
+    if (Math.abs(x - Math.round(x / CELL) * CELL) < Math.abs(y - Math.round(y / CELL) * CELL)) { x = Math.round(x / CELL) * CELL; }
+    else { y = Math.round(y / CELL) * CELL; }
+    if (!inBuilding(x, y)) { break; }
+  }
+  var c = new Car(role === 'cop' ? 'police' : role, x, y, Math.atan2(P.y - y, P.x - x));
+  c.ai = 'police'; c.role = role; c.slot = slot; c.turretA = c.a;
+  cars.push(c);
+}
+function policeDirector(dt) {
+  var P = playerPos(), i, c, counts = { cop: 0, fbi: 0, tank: 0 }, seen = false;
+  for (i = cars.length - 1; i >= 0; i--) {
+    c = cars[i];
+    if (!c.role || c === player.car) { continue; }
+    var d = dist(c.x, c.y, P.x, P.y);
+    if (c.dead && c.deadT > 25 || d > 1900) { cars.splice(i, 1); continue; }
+    if (c.dead || c.ai !== 'police') { continue; }
+    counts[c.role]++;
+    if (d < 750 && los(c.x, c.y, P.x, P.y)) { seen = true; }
+    /* BUSTED check: cop parked next to a slow player */
+    if (d < 75 && Math.abs(c.v) < 50 && (!player.car || Math.abs(player.car.v) < 20)) { G.bustT += dt; }
+  }
+  if (G.wanted === 0) { G.bustT = 0; return; }
+  if (seen) { G.lastSeen = G.t; }
+  G.bustT = Math.max(0, G.bustT - dt * 0.5);
+  if (G.bustT > (player.ch === 0 ? 3.5 : 2.5)) { busted(); return; }
+  /* heat decay when out of sight */
+  var evade = player.ch === 0 ? 8 : 12;
+  if (G.t - G.lastSeen > evade) {
+    setWanted(G.wanted - 1); G.heat = STAR_AT[G.wanted];
+    notify('SCANNER', G.wanted ? 'Units losing visual. Heat dropping.' : 'All units stand down. You are clear.', '#3ff6ff');
+    if (G.wanted === 0) { return; }
+  }
+  /* deploy units according to the star table */
+  G.spawnT -= dt;
+  if (G.spawnT <= 0) {
+    G.spawnT = 1.1;
+    if (counts.cop < DEPLOY.cops[G.wanted]) { spawnPolice('cop', counts.cop); }
+    else if (counts.fbi < DEPLOY.fbi[G.wanted]) { spawnPolice('fbi', counts.fbi); }
+    else if (counts.tank < DEPLOY.tanks[G.wanted]) { spawnPolice('tank', counts.tank); }
+  }
+  /* 3+ stars: spike strips on road tiles ahead of a driving player */
+  G.spikeT -= dt;
+  if (G.wanted >= 3 && player.car && G.spikeT <= 0) {
+    G.spikeT = rnd(7, 11);
+    var sx = P.x + Math.cos(P.a) * 280, sy = P.y + Math.sin(P.a) * 280;
+    if (isRoad(sx, sy) && !inBuilding(sx, sy)) {
+      var horiz = Math.abs(Math.cos(P.a)) > Math.abs(Math.sin(P.a));
+      spikes.push({ x: sx, y: sy, horiz: horiz, t: 22 }); if (spikes.length > 6) { spikes.shift(); }
+      notify('SCANNER', 'Spike strip deployed ahead!', '#3ff6ff');
+    }
+  }
+}
+
+
+/* ---- src/engine/11-spawning-population-management.js ---- */
+/* =====================================================================
+   11. SPAWNING / POPULATION MANAGEMENT
+   ===================================================================== */
+function sidewalkPoint() {
+  var bx = rndi(0, NB - 1), by = rndi(0, NB - 1), side = rndi(0, 3), t = rnd(45, 355);
+  var x0 = bx * CELL, y0 = by * CELL, o = rnd(44, 54);
+  if (side === 0) { return { x: x0 + t, y: y0 + o }; } if (side === 1) { return { x: x0 + t, y: y0 + CELL - o }; }
+  if (side === 2) { return { x: x0 + o, y: y0 + t }; } return { x: x0 + CELL - o, y: y0 + t };
+}
+function nearPlayerSidewalk() {
+  var P = playerPos(), i, s;
+  for (i = 0; i < 12; i++) { s = sidewalkPoint(); var d = dist(s.x, s.y, P.x, P.y); if (d > 500 && d < 1300) { return s; } }
+  return sidewalkPoint();
+}
+function spawnTraffic(initial) {
+  var P = playerPos(), i, ix, iy, d;
+  for (i = 0; i < 20; i++) {
+    ix = rndi(0, NB); iy = rndi(0, NB); d = dist(ix * CELL, iy * CELL, P.x, P.y);
+    if (initial ? d < 1500 : (d > 650 && d < 1300)) { break; }
+  }
+  var c = new Car(Math.random() < 0.2 ? 'sport' : 'sedan', 0, 0, 0);
+  placeOnRoad(c, ix, iy); cars.push(c);
+}
+function population(dt) {
+  var P = playerPos(), i, c, civ = 0;
+  for (i = cars.length - 1; i >= 0; i--) {
+    c = cars[i]; if (c === player.car || c.role) { continue; }
+    var d = dist(c.x, c.y, P.x, P.y);
+    if (d > 1700 || (c.dead && c.deadT > 30 && d > 600)) { cars.splice(i, 1); continue; }
+    if (c.ai === 'civ' && !c.dead) { civ++; }
+  }
+  if (civ < 18) { spawnTraffic(false); }
+  for (i = peds.length - 1; i >= 0; i--) {
+    var p = peds[i], pd = dist(p.x, p.y, P.x, P.y);
+    if ((p.dead && p.deadT > 20) || pd > 1700) { var s = nearPlayerSidewalk(); peds[i] = new Ped(s.x, s.y); }
+  }
+}
+
+
+/* ---- src/engine/12-missions-phone-economy-story.js ---- */
+/* =====================================================================
+   12. MISSIONS, PHONE ECONOMY & STORY
+   ===================================================================== */
+function startMission(m) {
+  G.mission = { def: m, done: false };
+  notify(m.from, m.text);
+  flash('JOB: ' + m.name.toUpperCase(), m.type === 'lose' ? 'Lose the heat' : (m.loc ? LOC[m.loc].name : (m.tx ? 'Marked on GPS' : 'Phone job')));
+  if (m.wanted) { setWanted(Math.max(G.wanted, m.wanted)); }
+}
+function randomJob() {
+  var ix = rndi(1, NB - 1), iy = rndi(1, NB - 1), horiz = Math.random() < 0.5;
+  var x = ix * CELL + (horiz ? 200 : 0), y = iy * CELL + (horiz ? 0 : 200);
+  var deliver = Math.random() < 0.5;
+  return { name: deliver ? 'Hot Delivery' : 'Drop-Off', from: pick(['ROSA', 'DEX']), type: deliver ? 'deliver' : 'goto',
+    text: deliver ? 'Client wants a car, no questions. Drop it at the GPS mark.' : 'Package needs moving across town. GPS is set.',
+    tx: x, ty: y, reward: rndi(20, 80) * 100, trust: 2 };
+}
+function missionTarget(m) {
+  if (m.loc) { return LOC[m.loc]; }
+  if (m.tx !== undefined) { return { x: m.tx, y: m.ty }; }
+  return null;
+}
+function completeMission() {
+  var m = G.mission.def;
+  G.cash += m.reward; G.trust = clamp(G.trust + m.trust, 0, 100); G.jobs++; G.score += 100 + Math.floor(m.reward / 100);
+  flash('JOB COMPLETE', '+$' + m.reward + '   TRUST +' + m.trust);
+  notify(m.from === 'ROSA' ? 'DEX' : 'ROSA', pick(['That is my partner.', 'Smooth. Too smooth.', 'Money in the bag, babe.', 'Leonida who? Palmetto is ours.']));
+  G.mission = null; G.missionDelay = 6;
+  if (G.missionIdx < STORY.length) { G.missionIdx++; }
+  save();
+}
+function missionUpdate(dt) {
+  if (!G.mission) {
+    G.missionDelay -= dt;
+    if (G.missionDelay <= 0) { startMission(G.missionIdx < STORY.length ? STORY[G.missionIdx] : randomJob()); }
+    return;
+  }
+  var m = G.mission.def, tg = missionTarget(m), P = playerPos();
+  if (m.type === 'goto' && dist(P.x, P.y, tg.x, tg.y) < 55) { completeMission(); }
+  else if (m.type === 'deliver' && player.car && !player.car.dead && dist(P.x, P.y, tg.x, tg.y) < 60) {
+    var c = player.car; exitCar(); c.ai = 'none'; completeMission();
+  }
+  else if (m.type === 'lose' && G.wanted === 0) { completeMission(); }
+}
+function runHeist() {
+  if (G.heist.run || G.heist.cd > 0) { return; }
+  G.heist.run = true; G.heist.prog = 0;
+}
+function heistUpdate(dt) {
+  var h = G.heist;
+  if (h.cd > 0) { h.cd -= dt; }
+  if (!h.run) { return; }
+  h.prog += dt / 3.5;
+  if (h.prog >= 1) {
+    h.run = false; h.cd = 45; G.cash += 50000; G.score += 200;
+    flash('HACK SUCCESS', '+$50,000 WIRED TO OFFSHORE');
+    if (Math.random() < 0.35) { setWanted(Math.max(G.wanted, 2)); notify('ROSA', 'They traced the ping! Investigation opened - 2 stars!'); }
+    else { notify('ROSA', 'Clean exit. No trace. I am a genius.'); }
+    if (G.mission && G.mission.def.type === 'heist') { completeMission(); }
+  }
+}
+function switchChar() {
+  player.ch = 1 - player.ch;
+  var c = CHARS[player.ch];
+  flash('SWITCH: ' + c.name, c.perk);
+  notify(player.ch === 0 ? 'ROSA' : 'DEX', player.ch === 0 ? 'My turn. Watch and learn.' : 'Keys. Now. I drive.');
+}
+
+/* Flatline / busted / respawn ----------------------------------------- */
+function die() {
+  if (G.over > 0) { return; }
+  G.over = 3.5; G.overText = 'FLATLINED'; G.overSub = 'Mercy Palms bill: -$' + Math.min(G.cash, 2000);
+  G.overAction = function () { G.cash -= Math.min(G.cash, 2000); respawn(LOC.hospital); G.trust = clamp(G.trust - 3, 0, 100); };
+}
+function busted() {
+  if (G.over > 0) { return; }
+  G.over = 3.5; G.overText = 'CUFFED'; G.overSub = 'Bail + lawyer: -10% cash, heavy weapons seized';
+  G.overAction = function () { G.cash = Math.floor(G.cash * 0.9); player.ammo[2] = 0; player.ammo[3] = 0; respawn(LOC.station); G.trust = clamp(G.trust - 5, 0, 100); };
+}
+function respawn(loc) {
+  if (player.car) { exitCar(); }
+  player.x = loc.x; player.y = loc.y + 30; player.hp = 100; player.armor = 0;
+  setWanted(0); clearPolice(); G.bustT = 0;
+  if (G.mission && G.mission.def.type !== 'heist') { notify(G.mission.def.from, 'Job blown. We will try again.'); G.mission = null; G.missionDelay = 6; }
+}
+
+/* Vehicles: enter / exit ---------------------------------------------- */
+function exitCar() {
+  var c = player.car; if (!c) { return; }
+  var side, ox, oy, k;
+  for (k = 0; k < 2; k++) {
+    side = k === 0 ? -PI / 2 : PI / 2;
+    ox = c.x + Math.cos(c.a + side) * (c.h / 2 + 14); oy = c.y + Math.sin(c.a + side) * (c.h / 2 + 14);
+    if (!inBuilding(ox, oy)) { break; }
+  }
+  player.x = ox; player.y = oy; player.a = c.a; c.ai = 'none'; c.thr = 0; c.str = 0; c.hb = false;
+  player.car = null;
+}
+function enterCar() {
+  var best = null, bd = 60, i, c;
+  for (i = 0; i < cars.length; i++) {
+    c = cars[i]; if (c.dead) { continue; }
+    var d = dist(player.x, player.y, c.x, c.y);
+    if (d < bd + c.r) { bd = d - c.r; best = c; }
+  }
+  if (!best) { return; }
+  if (best.ai === 'civ' || best.ai === 'police') {
+    var pd = new Ped(best.x + Math.cos(best.a + PI / 2) * 24, best.y + Math.sin(best.a + PI / 2) * 24);
+    pd.state = 'flee'; pd.t = 8; pd.fx = player.x; pd.fy = player.y;
+    peds[Math.floor(Math.random() * peds.length)] = pd;
+    var copsNear = false;
+    for (i = 0; i < cars.length; i++) { if (cars[i].role && cars[i] !== best && dist(cars[i].x, cars[i].y, player.x, player.y) < 450) { copsNear = true; } }
+    if (best.role) { crime(30); notify('SCANNER', 'Officer down! Cruiser stolen!', '#3ff6ff'); best.role = ''; }
+    else if (copsNear) { crime(10); }
+  }
+  best.ai = 'player'; best.mode = 'cruise'; player.car = best;
+  if (best.type === 'tank') { flash('HEAVY ARMOR', 'Fire = cannon. Turret follows aim.'); }
+}
+
+
+/* ---- src/engine/13-cheat-engine-passive-30-char-buffer-cons.js ---- */
+/* =====================================================================
+   13. CHEAT ENGINE (passive 30-char buffer + console + touch pad)
+   ===================================================================== */
+var cheatBuf = '';
+var CHEATS = {
+  MEDSUPPLY: { label: 'FULL HEALTH & ARMOR', fn: function () { player.hp = 100; player.armor = 100; } },
+  HEAVYMETAL:  { label: 'BATTLE TANK DELIVERED', fn: function () {
+    var a = player.car ? player.car.a : player.a, P = playerPos();
+    var t = new Car('tank', P.x + Math.cos(a) * 90, P.y + Math.sin(a) * 90, a); t.ai = 'none'; t.turretA = a; pushOut(t, t.r, 0); cars.push(t); } },
+  TOOLBOX:     { label: 'PISTOL + MICRO SMG + RPG, MAX AMMO', fn: function () {
+    for (var i = 1; i < 4; i++) { player.owned[i] = true; player.ammo[i] = WEAPONS[i].max; } player.weap = 3; } },
+  NITROUS:     { label: 'TURBO: ACCEL x3, TOP SPEED x4', fn: function () {
+    if (!player.car) { notify('SYSTEM', 'Get in a vehicle first, then re-enter the code.', '#ffe600'); return false; }
+    player.car.accelMul *= 3; player.car.maxMul *= 4; } },
+  BLANKSLATE: { label: 'WANTED LEVEL CLEARED', fn: function () { setWanted(0); clearPolice(); } },
+  MAXHEAT:     { label: 'FIVE STAR FUGITIVE', fn: function () { setWanted(5); G.heat = STAR_AT[5]; } },
+  LOWGRAVITY:  { label: 'GRAVITY x0.15', fn: function () { G.gravMul = G.gravMul < 1 ? 1 : 0.15; if (G.gravMul === 1) { flash('GRAVITY RESTORED', ''); return false; } } },
+  MONEYRAIN:   { label: '+$250,000', fn: function () { G.cash += 250000; } }
+};
+function runCheat(code) {
+  code = ('' + code).toUpperCase().replace(/[^A-Z]/g, '');
+  var c = CHEATS[code];
+  if (!c) { return false; }
+  var r = c.fn();
+  if (r !== false) { flash('CHEAT ACTIVATED', c.label); }
+  G.score = Math.max(0, G.score - 10);
+  return true;
+}
+/* Returns true when the key is part of a code being typed, so the
+   game swallows its hotkey meaning (E would exit the car, G switch gfx...). */
+function cheatKey(ch) {
+  cheatBuf = (cheatBuf + ch).slice(-30);
+  var k, n, typing = false;
+  for (k in CHEATS) {
+    if (!CHEATS.hasOwnProperty(k)) { continue; }
+    if (cheatBuf.length >= k.length && cheatBuf.substr(cheatBuf.length - k.length) === k) { runCheat(k); cheatBuf = ''; return true; }
+    for (n = Math.min(k.length - 1, cheatBuf.length); n >= 2; n--) {
+      if (cheatBuf.substr(cheatBuf.length - n) === k.substr(0, n)) { typing = true; break; }
+    }
+  }
+  return typing;
+}
+function conExec() {
+  var txt = G.conText; G.conText = '';
+  G.conLog.push('> ' + txt); if (G.conLog.length > 5) { G.conLog.shift(); }
+  var w = txt.toUpperCase().replace(/^\s+|\s+$/g, '');
+  if (w === 'HELP') { var names = []; for (var k in CHEATS) { if (CHEATS.hasOwnProperty(k)) { names.push(k); } } G.conLog.push(names.join(' ')); }
+  else if (w === 'FPS') { G.conLog.push('FPS ' + gfx.fps + ' pipe=' + (gfx.low ? 'TOPDOWN' : 'PERSPECTIVE') + ' mode=' + gfx.mode); }
+  else if (!runCheat(w)) { G.conLog.push('Unknown code. Type HELP.'); }
+  while (G.conLog.length > 5) { G.conLog.shift(); }
+}
+
+
+/* ---- src/engine/14-input-keyboard-mouse-multi-touch-virtual.js ---- */
+/* =====================================================================
+   14. INPUT: KEYBOARD, MOUSE, MULTI-TOUCH VIRTUAL CONTROLS
+   ===================================================================== */
+var keys = {}, keysHit = {}, mouse = { x: 0, y: 0, down: false, hit: false, moved: -10 };
+var touches = [], touchHits = {}, usingTouch = PLATFORM.touch, cornerTaps = [];
+var TB = {};                  // touch button layout (computed in layoutTouch)
+var uiButtons = [];           // clickable UI rects registered while drawing overlays
+
+function layoutTouch() {
+  var u = U;
+  TB.dpad = { x: 78 * u, y: VH - 82 * u, r: 64 * u };
+  TB.fire = { x: VW - 52 * u, y: VH - 54 * u, r: 32 * u, label: 'FIRE', c: '#ff3b1f' };
+  TB.gas = { x: VW - 52 * u, y: VH - 132 * u, r: 30 * u, label: 'GAS', c: '#2ee59d' };
+  TB.brake = { x: VW - 126 * u, y: VH - 46 * u, r: 25 * u, label: 'BRK', c: '#ff8a1f' };
+  TB.act = { x: VW - 126 * u, y: VH - 112 * u, r: 23 * u, label: 'ENTER', c: '#3ff6ff' };
+  TB.weap = { x: VW - 112 * u, y: VH - 176 * u, r: 19 * u, label: 'WPN', c: '#9b5cff' };
+  TB.phone = { x: VW / 2, y: VH - 30 * u, r: 20 * u, label: 'PHONE', c: '#ff3fa4' };
+}
+function inCircle(x, y, b, pad) { return b && dist(x, y, b.x, b.y) < b.r * (pad || 1.15); }
+function hitUI(x, y) {
+  for (var i = uiButtons.length - 1; i >= 0; i--) {
+    var b = uiButtons[i];
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) { b.fn(); return true; }
+  }
+  return false;
+}
+/* A pointer press anywhere: overlays first, then gameplay. Returns true if consumed. */
+function pointerPress(x, y, isTouch) {
+  if (G.over > 0) { return true; }
+  /* hidden cheat zone: triple tap the top-left corner */
+  if (x < 34 * U && y < 34 * U) {
+    var t = now(); cornerTaps.push(t); while (cornerTaps.length && t - cornerTaps[0] > 1200) { cornerTaps.shift(); }
+    if (cornerTaps.length >= 3) { cornerTaps = []; G.pad = !G.pad; G.padText = ''; return true; }
+  }
+  if (G.pad || G.phone || G.wheel) { if (hitUI(x, y)) { return true; } }
+  if (G.wheel) { G.wheelSel = wheelSlotAt(x, y); selectWeapon(G.wheelSel); G.wheel = false; return true; }
+  if (G.pad) { return true; }
+  if (isTouch) {
+    if (inCircle(x, y, TB.phone)) { togglePhone(); return true; }
+    if (inCircle(x, y, TB.weap)) { G.wheel = true; G.wheelSel = player.weap; return true; }
+    if (inCircle(x, y, TB.act)) { touchHits.act = true; return true; }
+    if (G.phone && x > phoneRect.x && y > phoneRect.y && x < phoneRect.x + phoneRect.w && y < phoneRect.y + phoneRect.h) { return true; }
+    return false;
+  }
+  if (G.phone && x > phoneRect.x && y > phoneRect.y && x < phoneRect.x + phoneRect.w && y < phoneRect.y + phoneRect.h) { return true; }
+  return false;
+}
+function touchXY(t) {
+  var r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+  return { x: t.clientX - r.left, y: t.clientY - r.top };
+}
+function onTouchStart(e) {
+  usingTouch = true;
+  var ch = e.changedTouches, i;
+  for (i = 0; i < ch.length; i++) {
+    var p = touchXY(ch[i]);
+    if (!pointerPress(p.x, p.y, true)) { touches.push({ id: ch[i].identifier, x: p.x, y: p.y, fresh: true }); }
+  }
+  if (e.preventDefault) { e.preventDefault(); }
+}
+function onTouchMove(e) {
+  var ch = e.changedTouches, i, j;
+  for (i = 0; i < ch.length; i++) {
+    for (j = 0; j < touches.length; j++) {
+      if (touches[j].id === ch[i].identifier) { var p = touchXY(ch[i]); touches[j].x = p.x; touches[j].y = p.y; }
+    }
+    if (G.wheel) { var q = touchXY(ch[i]); G.wheelSel = wheelSlotAt(q.x, q.y); }
+  }
+  if (e.preventDefault) { e.preventDefault(); }
+}
+function onTouchEnd(e) {
+  var ch = e.changedTouches, i, j;
+  for (i = 0; i < ch.length; i++) {
+    for (j = touches.length - 1; j >= 0; j--) { if (touches[j].id === ch[i].identifier) { touches.splice(j, 1); } }
+  }
+  if (e.preventDefault) { e.preventDefault(); }
+}
+/* Resolve held virtual buttons from active touches each frame. */
+function touchState() {
+  var s = { up: false, down: false, left: false, right: false, fire: false, fireHit: false, gas: false, brake: false }, i, t;
+  for (i = 0; i < touches.length; i++) {
+    t = touches[i];
+    var dx = t.x - TB.dpad.x, dy = t.y - TB.dpad.y, dd = Math.sqrt(dx * dx + dy * dy);
+    if (dd < TB.dpad.r * 1.5 && dd > TB.dpad.r * 0.18) {
+      if (dx < -dd * 0.38) { s.left = true; } if (dx > dd * 0.38) { s.right = true; }
+      if (dy < -dd * 0.38) { s.up = true; } if (dy > dd * 0.38) { s.down = true; }
+    }
+    if (inCircle(t.x, t.y, TB.fire)) { s.fire = true; if (t.fresh) { s.fireHit = true; } }
+    if (inCircle(t.x, t.y, TB.gas)) { s.gas = true; }
+    if (inCircle(t.x, t.y, TB.brake)) { s.brake = true; }
+    t.fresh = false;
+  }
+  return s;
+}
+function selectWeapon(i) {
+  if (!player.owned[i]) { notify('SYSTEM', WEAPONS[i].name + ' not owned. Try a phone job... or a code.', '#ffe600'); return; }
+  player.weap = i;
+}
+function togglePhone() { G.phone = !G.phone; G.page = 'home'; }
+
+function onKeyDown(e) {
+  e = e || window.event;
+  var k = e.keyCode || e.which, ch = e.key;
+  usingTouch = false;
+  /* tilde / backquote toggles the console */
+  if (k === 192 || k === 223 || ch === '`' || ch === '~') { G.console = !G.console; G.conText = ''; stop(e); return; }
+  if (G.console) {
+    if (k === 13) { conExec(); } else if (k === 27) { G.console = false; } else if (k === 8) { G.conText = G.conText.slice(0, -1); }
+    else if ((k >= 65 && k <= 90) || (k >= 48 && k <= 57) || k === 32) { if (G.conText.length < 30) { G.conText += String.fromCharCode(k); } }
+    stop(e); return;
+  }
+  var swallow = (k >= 65 && k <= 90) ? cheatKey(String.fromCharCode(k)) : false;
+  if (!keys[k] && !swallow) { keysHit[k] = true; }
+  keys[k] = true;
+  if (k === 32 || (k >= 37 && k <= 40) || k === 9) { stop(e); }
+}
+function onKeyUp(e) { e = e || window.event; keys[e.keyCode || e.which] = false; }
+function stop(e) { if (e.preventDefault) { e.preventDefault(); } else { e.returnValue = false; } }
+function mouseXY(e) {
+  var r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+
+/* ---- src/engine/14b-gamepad-dualshock-dualsense-xbox-standard-mapping.js ---- */
+/* =====================================================================
+   14b. GAMEPAD (DualShock 4 / DualSense / Xbox, W3C "standard" mapping)
+   Works in the PS4/PS5 web browser, desktop browsers, Electron and
+   Android WebView where navigator.getGamepads exists. ES5, feature-detected.
+
+   Layout (PlayStation names):
+     Left stick / D-pad ... move on foot, steer in car (D-pad also = phone apps)
+     R2 ................... gas in car / fire on foot (analog)
+     L2 ................... brake & reverse in car
+     R1 ................... fire (drive-by in car)
+     Right stick .......... aim on foot, turret in tank
+     Triangle ............. enter / exit vehicle
+     Cross ................ handbrake in car / sprint on foot / confirm in menus
+     Circle ............... back / close overlays
+     Square ............... switch Rosa <-> Dex
+     L1 ................... weapon wheel (pick with right/left stick, release)
+     OPTIONS .............. Palmetto OS phone
+     SHARE / CREATE ....... toggle graphics pipe
+   ===================================================================== */
+var pad = { on: false, prev: [], state: null, aimX: 0, aimY: 0, aimT: -10, name: '' };
+function padPressed(b, i) { var x = b[i]; return !!x && (typeof x === 'object' ? (x.pressed || x.value > 0.5) : x > 0.5); }
+function padValue(b, i) { var x = b[i]; return !x ? 0 : (typeof x === 'object' ? x.value : x); }
+function pollGamepad() {
+  pad.state = null;
+  if (!navigator.getGamepads) { return; }
+  var list = navigator.getGamepads(), gp = null, i;
+  if (!list) { return; }
+  for (i = 0; i < list.length; i++) { if (list[i] && list[i].connected !== false && list[i].buttons && list[i].buttons.length) { gp = list[i]; break; } }
+  if (!gp) { return; }
+  if (!pad.on) { pad.on = true; pad.name = gp.id || 'gamepad'; usingTouch = false; notify('SYSTEM', 'Controller connected: ' + pad.name.substr(0, 40), '#ffe600'); }
+  var b = gp.buttons, ax = gp.axes || [], dz = 0.25, s = {}, hit = {};
+  var lx = Math.abs(ax[0] || 0) > dz ? ax[0] : 0, ly = Math.abs(ax[1] || 0) > dz ? ax[1] : 0;
+  var rx = Math.abs(ax[2] || 0) > dz ? ax[2] : 0, ry = Math.abs(ax[3] || 0) > dz ? ax[3] : 0;
+  for (i = 0; i < 18; i++) { s[i] = padPressed(b, i); hit[i] = s[i] && !pad.prev[i]; pad.prev[i] = s[i]; }
+  if (s[0] || s[1] || s[2] || s[3] || lx || ly) { usingTouch = false; }
+  pad.state = {
+    up: ly < -0.35 || s[12], down: ly > 0.35 || s[13], left: lx < -0.35 || s[14], right: lx > 0.35 || s[15],
+    steer: lx || ((s[15] ? 1 : 0) - (s[14] ? 1 : 0)), moveX: lx || ((s[15] ? 1 : 0) - (s[14] ? 1 : 0)), moveY: ly || ((s[13] ? 1 : 0) - (s[12] ? 1 : 0)),
+    gas: padValue(b, 7), brake: padValue(b, 6), r1: s[5], r1Hit: hit[5], r2Hit: hit[7],
+    act: hit[3], hb: s[0], cross: hit[0], back: hit[1], sw: hit[2], wheel: hit[4], wheelUp: !s[4] && pad.prev.l1Was,
+    phone: hit[9], gfx: hit[8], dU: hit[12], dR: hit[15], dD: hit[13], dL: hit[14]
+  };
+  pad.prev.l1Was = s[4];
+  if (rx || ry) { pad.aimX = rx; pad.aimY = ry; pad.aimT = G.t; }
+  /* overlay navigation */
+  var st = pad.state;
+  if (st.phone) { togglePhone(); }
+  if (st.gfx) { cycleGfx(); }
+  if (st.sw) { switchChar(); }
+  if (st.back) { if (G.pad || G.wheel || G.console) { G.pad = false; G.wheel = false; G.console = false; } else if (G.phone) { if (G.page !== 'home') { G.page = 'home'; } else { G.phone = false; } } }
+  if (G.phone) {
+    if (st.dU) { phoneKey(0); } else if (st.dR) { phoneKey(1); } else if (st.dD) { phoneKey(2); } else if (st.dL) { phoneKey(3); }
+    if (st.cross && G.page === 'heist') { runHeist(); }
+  }
+  /* L1 hold = weapon wheel, pick with right stick (or left stick), release to equip */
+  if (st.wheel) { G.wheel = true; G.wheelSel = player.weap; }
+  if (G.wheel) {
+    var wx = rx || lx, wy = ry || ly;
+    if (Math.abs(wx) + Math.abs(wy) > 0.5) { G.wheelSel = (Math.round(wrapA(Math.atan2(wy, wx) + PI / 2) / (PI / 2)) % 4 + 4) % 4; }
+    if (st.wheelUp) { selectWeapon(G.wheelSel); G.wheel = false; }
+  }
+}
+/* Merge controller state into the frame's input record (called by readInput). */
+function applyGamepad(I) {
+  var s = pad.state;
+  if (!s || G.phone || G.wheel) { return I; }
+  if (player.car) {
+    I.up = I.up || s.gas > 0.15; I.down = I.down || s.brake > 0.15;
+    I.left = I.left || s.left; I.right = I.right || s.right;
+    I.padSteer = s.steer; I.padGas = s.gas; I.padBrake = s.brake;
+    I.hb = I.hb || s.hb;
+    I.fire = I.fire || s.r1; I.fireHit = I.fireHit || s.r1Hit;
+  } else {
+    I.up = I.up || s.up; I.down = I.down || s.down; I.left = I.left || s.left; I.right = I.right || s.right;
+    I.padMoveX = s.moveX; I.padMoveY = s.moveY;
+    I.sprint = I.sprint || s.hb;
+    I.fire = I.fire || s.r1 || s.gas > 0.5; I.fireHit = I.fireHit || s.r1Hit || s.r2Hit;
+  }
+  I.act = I.act || s.act;
+  return I;
+}
+
+/* ---- src/engine/14c-multiplayer-lan-online-relay-client.js ---- */
+/* =====================================================================
+   14c. MULTIPLAYER (relay client)
+   Up to 16 players share one Palmetto County through the relay built into
+   manager.js (`node manager.js --serve` or `--multiplayer`).
+   Transport: plain XHR polling at ~12 Hz. No WebSocket required, so it
+   works on legacy WebKit, the PS4/PS5 browser, Electron and Android.
+   Each client simulates its own traffic; players, gunfire, rockets and
+   explosions are shared (PvP damage included).
+
+   How to connect:
+     * open the game from the server URL (http://<host-ip>:8080/) -> auto-joins
+     * or add ?mp=http://<host-ip>:8080 to any build / file URL
+     * or Phone > ONLINE > JOIN and type the host address
+   ===================================================================== */
+var MP = { on: false, url: '', id: '', name: '', players: {}, seq: 0, sendT: 0, busy: false, out: [], status: 'OFFLINE', lastOk: 0, fails: 0 };
+var MP_NAMES = ['Gator', 'Flamingo', 'Neon', 'Riptide', 'Mango', 'Hurricane', 'Palmetto', 'Vice', 'Coral', 'Sunset', 'Manatee', 'Pelican'];
+function mpInit() {
+  MP.id = 'p' + Math.floor(Math.random() * 1e9).toString(36);
+  MP.name = pick(MP_NAMES) + rndi(10, 99);
+  var q = (window.location && window.location.search) || '', m = q.match(/[?&]mp=([^&]+)/);
+  if (m) { mpConnect(decodeURIComponent(m[1])); return; }
+  var proto = window.location && window.location.protocol;
+  if (proto === 'http:' || proto === 'https:') { mpConnect(''); }   // same-origin server?
+}
+function mpXhr(method, path, body, cb) {
+  var x;
+  try { x = new XMLHttpRequest(); } catch (e) { cb(null); return; }
+  x.onreadystatechange = function () {
+    if (x.readyState !== 4) { return; }
+    var data = null;
+    if (x.status === 200) { try { data = JSON.parse(x.responseText); } catch (e2) { data = null; } }
+    cb(data);
+  };
+  try {
+    x.open(method, MP.url + path, true);
+    if (body) { x.setRequestHeader('Content-Type', 'text/plain'); }   // simple request = no CORS preflight
+    x.send(body || null);
+  } catch (e3) { cb(null); }
+}
+function mpConnect(url) {
+  MP.url = (url || '').replace(/\/+$/, '');
+  if (MP.url && !/^https?:\/\//.test(MP.url)) { MP.url = 'http://' + MP.url; }
+  MP.status = 'CONNECTING';
+  mpXhr('GET', '/mp/ping', null, function (d) {
+    if (d && d.server === 'neontide-mp') {
+      MP.on = true; MP.status = 'ONLINE'; MP.fails = 0; MP.seq = d.seq || 0;
+      notify('ONLINE', 'Joined Palmetto County lobby as ' + MP.name + ' (' + (d.players || 0) + ' others online)', '#2ee59d');
+    } else { MP.on = false; MP.status = url ? 'NO SERVER AT ' + MP.url : 'OFFLINE'; if (url) { notify('ONLINE', 'No multiplayer server found at ' + MP.url, '#ff3b1f'); } }
+  });
+}
+function mpEmit(ev) { if (MP.on && MP.out.length < 40) { MP.out.push(ev); } }
+function mpUpdate(dt) {
+  var id, p, k;
+  /* smooth remote players toward their last network state (interpolation) */
+  for (id in MP.players) {
+    if (!MP.players.hasOwnProperty(id)) { continue; }
+    p = MP.players[id]; k = 1 - Math.exp(-dt * 12);
+    p.x += (p.tx - p.x) * k; p.y += (p.ty - p.y) * k; p.a += wrapA(p.ta - p.a) * k;
+  }
+  if (!MP.on) { return; }
+  MP.sendT -= dt;
+  if (MP.sendT > 0 || MP.busy) { return; }
+  MP.sendT = 0.08; MP.busy = true;
+  var c = player.car;
+  var me = { id: MP.id, name: MP.name, ch: player.ch, x: Math.round(player.x), y: Math.round(player.y),
+    a: Math.round((c ? c.a : player.a) * 100) / 100, car: c ? c.type : '', color: c ? c.color : '', ta: c ? Math.round(c.turretA * 100) / 100 : 0,
+    hp: Math.round(player.hp), w: G.wanted, weap: player.weap };
+  var body = JSON.stringify({ me: me, seq: MP.seq, ev: MP.out });
+  MP.out = [];
+  mpXhr('POST', '/mp/sync', body, function (d) {
+    MP.busy = false;
+    if (!d) { MP.fails++; if (MP.fails > 25) { MP.on = false; MP.status = 'DISCONNECTED'; MP.players = {}; notify('ONLINE', 'Lost connection to the lobby.', '#ff3b1f'); } return; }
+    MP.fails = 0; MP.lastOk = G.t; MP.seq = d.seq;
+    var seen = {}, i, s;
+    for (i = 0; i < d.players.length; i++) {
+      s = d.players[i]; seen[s.id] = true;
+      p = MP.players[s.id];
+      if (!p) { p = MP.players[s.id] = { x: s.x, y: s.y, a: s.a }; notify('ONLINE', s.name + ' joined the session', '#2ee59d'); }
+      p.tx = s.x; p.ty = s.y; p.ta = s.a; p.name = s.name; p.ch = s.ch; p.car = s.car; p.color = s.color || '#fff'; p.turretA = s.ta; p.hp = s.hp; p.w = s.w; p.weap = s.weap;
+    }
+    for (id in MP.players) { if (MP.players.hasOwnProperty(id) && !seen[id]) { notify('ONLINE', MP.players[id].name + ' left', '#aaa'); delete MP.players[id]; } }
+    for (i = 0; i < d.events.length; i++) { mpEvent(d.events[i]); }
+  });
+}
+function mpEvent(e) {
+  if (e.t === 'boom') { explode(e.x, e.y, 'remote'); }
+  else if (e.t === 'shot') { if (tracers.length < 40) { tracers.push({ x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, t: 0.08, c: '#2ee59d' }); } noise(e.x1, e.y1, 300); }
+  else if (e.t === 'rocket') { fireRocket(e.x, e.y, e.a, 'remote', null, e.k); rockets[rockets.length - 1].net = true; }
+  else if (e.t === 'hit' && e.to === MP.id) { hurtPlayer(e.dmg); G.shake = Math.min(1, G.shake + 0.2); if (player.hp <= 0) { notify('ONLINE', 'Taken out by ' + e.by, '#ff3b1f'); } }
+}
+/* Ray test against remote players for PvP hitscan. Returns hit distance or -1. */
+function mpRayHit(x, y, cx, cy, maxT, dmg) {
+  var id, p, t, px, py, best = -1, bestId = null, r;
+  for (id in MP.players) {
+    if (!MP.players.hasOwnProperty(id)) { continue; }
+    p = MP.players[id]; px = p.x - x; py = p.y - y; t = px * cx + py * cy; r = p.car ? 20 : 10;
+    if (t > 0 && t < maxT && Math.abs(px * cy - py * cx) < r && (best < 0 || t < best)) { best = t; bestId = id; }
+  }
+  if (bestId) { mpEmit({ t: 'hit', to: bestId, dmg: Math.round(dmg * (MP.players[bestId].car ? 0.3 : 1)), by: MP.name }); }
+  return best;
+}
+function mpNearRemote(x, y, r) {
+  for (var id in MP.players) { if (MP.players.hasOwnProperty(id) && dist(x, y, MP.players[id].x, MP.players[id].y) < r) { return true; } }
+  return false;
+}
+var mpFake = { x: 0, y: 0, a: 0, w: 46, h: 22, r: 16, type: 'sedan', color: '#fff', z: 0, dead: false, popped: false, v: 0, turretA: 0 };
+function mpDrawWorld() {
+  var id, p, T;
+  for (id in MP.players) {
+    if (!MP.players.hasOwnProperty(id)) { continue; }
+    p = MP.players[id];
+    if (p.car && CAR_TYPES[p.car]) {
+      T = CAR_TYPES[p.car]; mpFake.x = p.x; mpFake.y = p.y; mpFake.a = p.a; mpFake.w = T.w; mpFake.h = T.h; mpFake.type = p.car; mpFake.color = p.color; mpFake.turretA = p.turretA || p.a;
+      drawCar(mpFake);
+    } else {
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.a);
+      ctx.fillStyle = 'rgba(46,229,157,0.35)'; ctx.beginPath(); ctx.arc(0, 0, 13, 0, PI2, false); ctx.fill();
+      ctx.fillStyle = CHARS[p.ch || 0].color; ctx.fillRect(-4, -6, 8, 12);
+      ctx.fillStyle = '#c68642'; ctx.beginPath(); ctx.arc(1, 0, 4, 0, PI2, false); ctx.fill();
+      if (p.weap > 0) { ctx.fillStyle = '#111'; ctx.fillRect(4, 3, p.weap === 3 ? 16 : 9, 3); }
+      ctx.restore();
+    }
+  }
+}
+function mpDrawHUD() {
+  if (!MP.on) { return; }
+  var id, p, sx, sy;
+  font(11 * U, true);
+  for (id in MP.players) {
+    if (!MP.players.hasOwnProperty(id)) { continue; }
+    p = MP.players[id];
+    sx = (p.x - cam.x) * cam.zoom + VW / 2; sy = (p.y - cam.y) * cam.zoom + VH / 2 - 26 * U;
+    if (sx < -50 || sx > VW + 50 || sy < -50 || sy > VH + 50) { continue; }
+    text(p.name + (p.w ? ' ' + p.w + '*' : ''), sx, sy, '#2ee59d', 'center');
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - 18 * U, sy + 3 * U, 36 * U, 4 * U);
+    ctx.fillStyle = '#ff3fa4'; ctx.fillRect(sx - 18 * U, sy + 3 * U, 36 * U * clamp(p.hp / 100, 0, 1), 4 * U);
+  }
+  font(10 * U, true);
+  var n = 0; for (id in MP.players) { if (MP.players.hasOwnProperty(id)) { n++; } }
+  text('ONLINE ' + (n + 1) + 'P  ' + MP.name, VW - 10 * U, VH - (usingTouch ? 230 : 12) * U, '#2ee59d', 'right');
+}
+function mpMinimap(L, my, s) {
+  ctx.fillStyle = '#2ee59d';
+  for (var id in MP.players) { if (MP.players.hasOwnProperty(id)) { ctx.fillRect(L + MP.players[id].x * s - 2, my + MP.players[id].y * s - 2, 4, 4); } }
+}
+function mpJoinPrompt() {
+  var h = null;
+  try { if (window.prompt) { h = window.prompt('Multiplayer host (e.g. 192.168.1.20:8080)', MP.url ? MP.url.replace(/^https?:\/\//, '') : ''); } } catch (e) { h = null; }
+  if (h) { mpConnect(h); } else { notify('ONLINE', 'Start `node manager.js --serve` on a PC, then open http://<PC-IP>:8080 on every device.', '#2ee59d'); }
+}
+
+/* ---- src/engine/15-update-loop.js ---- */
+/* =====================================================================
+   15. UPDATE LOOP
+   ===================================================================== */
+var cam = { x: player.x, y: player.y, zoom: 1, lx: 0, ly: 0 };
+function screenToWorld(x, y) { return { x: (x - VW / 2) / cam.zoom + cam.x, y: (y - VH / 2) / cam.zoom + cam.y }; }
+
+function readInput() {
+  var ts = usingTouch ? touchState() : null;
+  var I = {
+    up: keys[87] || keys[38], down: keys[83] || keys[40], left: keys[65] || keys[37], right: keys[68] || keys[39],
+    fire: keys[74] || keys[17] || mouse.down, fireHit: keysHit[74] || keysHit[17] || mouse.hit,
+    hb: keys[32], sprint: keys[16], act: keysHit[69] || keysHit[70] || touchHits.act
+  };
+  if (ts) {
+    I.up = I.up || ts.up || ts.gas; I.down = I.down || ts.down || ts.brake; I.left = I.left || ts.left; I.right = I.right || ts.right;
+    I.fire = I.fire || ts.fire; I.fireHit = I.fireHit || ts.fireHit; I.hb = I.hb || (ts.brake && ts.gas);
+  }
+  return applyGamepad(I);
+}
+function handleHotkeys() {
+  if (keysHit[81]) { if (G.wheel) { selectWeapon(G.wheelSel); G.wheel = false; } else { G.wheel = true; G.wheelSel = player.weap; } }
+  if (keysHit[80]) { togglePhone(); }
+  if (keysHit[67]) { switchChar(); }
+  if (keysHit[71]) { cycleGfx(); }
+  if (keysHit[27]) { G.phone = false; G.wheel = false; G.pad = false; }
+  for (var i = 0; i < 4; i++) {
+    if (keysHit[49 + i]) { if (G.phone) { phoneKey(i); } else if (G.wheel) { G.wheelSel = i; } else { selectWeapon(i); } }
+  }
+  if (G.wheel) { if (keysHit[38] || keysHit[87]) { G.wheelSel = 0; } if (keysHit[39] || keysHit[68]) { G.wheelSel = 1; } if (keysHit[40] || keysHit[83]) { G.wheelSel = 2; } if (keysHit[37] || keysHit[65]) { G.wheelSel = 3; } }
+}
+
+function updatePlayer(dt, I) {
+  var c = player.car;
+  if (player.fireCd > 0) { player.fireCd -= dt; }
+  if (player.punchT > 0) { player.punchT -= dt; }
+  /* aim: mouse on desktop, facing direction on touch */
+  var mouseAim = !usingTouch && (G.t - mouse.moved < 4) && !(G.t - pad.aimT < 3);
+  var stickAim = G.t - pad.aimT < 3;
+  var mw = screenToWorld(mouse.x, mouse.y), ox = c ? c.x : player.x, oy = c ? c.y : player.y;
+  if (I.act && !G.wheel) { if (c) { exitCar(); } else { enterCar(); } c = player.car; }
+  if (c) {
+    c.thr = I.up ? 1 : (I.down ? -1 : 0);
+    /* steering ramps in/out instead of snapping -> smooth arcs on keyboard & touch */
+    var wantStr = I.padSteer ? clamp(I.padSteer * 1.2, -1, 1) : ((I.right ? 1 : 0) - (I.left ? 1 : 0));
+    if (I.padGas > 0.15 || I.padBrake > 0.15) { c.thr = I.padGas > 0.15 ? I.padGas : -I.padBrake; }
+    c.str += (wantStr - c.str) * (1 - Math.exp(-dt * (wantStr === 0 ? 14 : 9)));
+    c.hb = !!I.hb;
+    if (c.type === 'tank') {
+      var want = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - oy, mw.x - ox) : c.a);
+      c.turretA = wrapA(c.turretA + clamp(wrapA(want - c.turretA), -2.5 * dt, 2.5 * dt));
+    }
+    player.x = c.x; player.y = c.y; player.aim = c.a;
+    /* spike strips */
+    for (var s = 0; s < spikes.length; s++) {
+      if (!c.popped && dist(c.x, c.y, spikes[s].x, spikes[s].y) < 34) { c.popped = true; flash('TIRES SHREDDED', 'Steal another ride!'); sparks(c.x, c.y, 10); }
+    }
+    if (c.dead && c.burnT > 0 && c.burnT < 1.2) { notify('DEX', 'Car is on fire! GET OUT!'); }
+  } else {
+    var mx = (I.right ? 1 : 0) - (I.left ? 1 : 0), my = (I.down ? 1 : 0) - (I.up ? 1 : 0);
+    var sp = I.sprint ? 210 : 135;
+    if (I.padMoveX || I.padMoveY) { mx = I.padMoveX; my = I.padMoveY; sp *= Math.min(1, Math.sqrt(mx * mx + my * my)); }
+    if (mx || my) {
+      var l = Math.sqrt(mx * mx + my * my), ka = 1 - Math.exp(-dt * 14);
+      player.vx += (mx / l * sp - player.vx) * ka; player.vy += (my / l * sp - player.vy) * ka;
+      player.a += wrapA(Math.atan2(my, mx) - player.a) * Math.min(1, dt * 16);
+    } else { var kd = 1 - Math.exp(-dt * 18); player.vx -= player.vx * kd; player.vy -= player.vy * kd; }
+    player.x += player.vx * dt; player.y += player.vy * dt;
+    pushOut(player, 8, 0);
+    player.aim = stickAim ? Math.atan2(pad.aimY, pad.aimX) : (mouseAim ? Math.atan2(mw.y - player.y, mw.x - player.x) : player.a);
+    if (mouseAim || stickAim) { player.a = player.aim; }
+  }
+  if (!G.phone || usingTouch) { if ((I.fire || I.fireHit) && !G.wheel) { playerFire(I.fireHit); } }
+  /* cash pickups */
+  for (var i = pickups.length - 1; i >= 0; i--) {
+    var p = pickups[i]; p.t += dt;
+    if (dist(p.x, p.y, player.x, player.y) < (c ? 30 : 18)) { G.cash += p.amt; addP(p.x, p.y, 0, -40, 0.6, 3, '#2ee59d', 0); pickups.splice(i, 1); }
+    else if (p.t > 60) { pickups.splice(i, 1); }
+  }
+}
+
+function collideCars(dt) {
+  var i, j, a, b, n = cars.length;
+  for (i = 0; i < n; i++) {
+    a = cars[i];
+    for (j = i + 1; j < n; j++) {
+      b = cars[j];
+      var dx = b.x - a.x, dy = b.y - a.y, rr = a.r + b.r;
+      if (Math.abs(dx) > rr || Math.abs(dy) > rr || Math.abs(a.z - b.z) > 30) { continue; }
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d >= rr || d < 0.001) { continue; }
+      var nx = dx / d, ny = dy / d, over = rr - d, tm = a.mass + b.mass;
+      a.x -= nx * over * (b.mass / tm); a.y -= ny * over * (b.mass / tm);
+      b.x += nx * over * (a.mass / tm); b.y += ny * over * (a.mass / tm);
+      var avx = Math.cos(a.a) * a.v, avy = Math.sin(a.a) * a.v, bvx = Math.cos(b.a) * b.v, bvy = Math.sin(b.a) * b.v;
+      var rel = (avx - bvx) * nx + (avy - bvy) * ny;
+      if (rel <= 0) { continue; }
+      var imp = 1.6 * rel / tm;
+      avx -= imp * b.mass * nx; avy -= imp * b.mass * ny; bvx += imp * a.mass * nx; bvy += imp * a.mass * ny;
+      a.v = avx * Math.cos(a.a) + avy * Math.sin(a.a); b.v = bvx * Math.cos(b.a) + bvy * Math.sin(b.a);
+      a.spin += (Math.random() - 0.5) * rel * 0.02 * b.mass / a.mass; b.spin += (Math.random() - 0.5) * rel * 0.02 * a.mass / b.mass;
+      if (rel > 70) {
+        var pa = a === player.car ? 'player' : null, pb = b === player.car ? 'player' : null;
+        a.damage(rel * 0.06 * b.mass / a.mass, pb); b.damage(rel * 0.06 * a.mass / b.mass, pa);
+        sparks((a.x + b.x) / 2, (a.y + b.y) / 2, 5);
+        if (a.ai === 'civ') { fleeCar(a); } if (b.ai === 'civ') { fleeCar(b); }
+        if ((a === player.car || b === player.car) && (a.role === 'fbi' || b.role === 'fbi')) { G.shake = Math.min(1, G.shake + 0.3); }
+      }
+    }
+  }
+  /* cars vs pedestrians and player on foot */
+  for (i = 0; i < n; i++) {
+    a = cars[i]; var sp = Math.abs(a.v);
+    if (sp < 45 || a.z > 20) { continue; }
+    for (j = 0; j < peds.length; j++) {
+      b = peds[j]; if (b.dead) { continue; }
+      if (Math.abs(b.x - a.x) < a.r + 8 && Math.abs(b.y - a.y) < a.r + 8 && dist(a.x, a.y, b.x, b.y) < a.r + 6) {
+        b.kill(a === player.car ? 'player' : null, a.a); a.v *= 0.85;
+      }
+    }
+    if (!player.car && a.ai !== 'player' && dist(a.x, a.y, player.x, player.y) < a.r + 8) {
+      hurtPlayer(sp * 0.07); player.x += Math.cos(a.a) * 20; player.y += Math.sin(a.a) * 20; a.v *= 0.5;
+    }
+  }
+}
+
+function updateRockets(dt) {
+  for (var i = rockets.length - 1; i >= 0; i--) {
+    var r = rockets[i], boom = false, j;
+    r.t += dt; r.x += Math.cos(r.a) * r.v * dt; r.y += Math.sin(r.a) * r.v * dt;
+    if (Math.random() < (gfx.low ? 0.3 : 0.8)) { addP(r.x, r.y, rnd(-10, 10), rnd(-10, 10), rnd(0.4, 0.9), rnd(3, 6), '#9a93a8', 1); }
+    if (r.t > 2.4 || inBuilding(r.x, r.y) || r.x < -50 || r.y < -50 || r.x > WORLD + 50 || r.y > WORLD + 50) { boom = true; }
+    for (j = 0; j < cars.length && !boom; j++) { if (cars[j] !== r.car && dist(r.x, r.y, cars[j].x, cars[j].y) < cars[j].r + 4) { boom = true; } }
+    for (j = 0; j < peds.length && !boom; j++) { if (!peds[j].dead && dist(r.x, r.y, peds[j].x, peds[j].y) < 10) { boom = true; } }
+    if (!boom && r.owner !== 'player' && !player.car && dist(r.x, r.y, player.x, player.y) < 14) { boom = true; }
+    if (!boom && r.owner === 'player' && mpNearRemote(r.x, r.y, 18)) { boom = true; }
+    if (boom) { rockets.splice(i, 1); explode(r.x, r.y, r.owner); }
+  }
+}
+function updateParticles(dt) {
+  var lim = gfx.low ? 90 : PMAX, i, p;
+  for (i = 0; i < lim; i++) {
+    p = parts[i]; if (!p.on) { continue; }
+    p.life -= dt; if (p.life <= 0) { p.on = false; continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.type === 3) {      /* debris obeys global gravity (LOWGRAVITY floats it) */
+      p.vz -= GRAVITY * G.gravMul * dt; p.z += p.vz * dt;
+      if (p.z < 0) { p.z = 0; p.vz = -p.vz * 0.4; p.vx *= 0.6; p.vy *= 0.6; }
+      p.life += dt * (G.gravMul < 1 ? 0.7 : 0);
+    } else if (p.type === 1) { p.size += dt * 14; p.vx *= 0.98; p.vy *= 0.98; }
+    else { p.vx *= 0.92; p.vy *= 0.92; }
+  }
+  for (i = tracers.length - 1; i >= 0; i--) { tracers[i].t -= dt; if (tracers[i].t <= 0) { tracers.splice(i, 1); } }
+  for (i = spikes.length - 1; i >= 0; i--) { spikes[i].t -= dt; if (spikes[i].t <= 0) { spikes.splice(i, 1); } }
+}
+function updateUI(dt) {
+  var i;
+  for (i = toasts.length - 1; i >= 0; i--) { toasts[i].t -= dt; if (toasts[i].t <= 0) { toasts.splice(i, 1); } }
+  if (flashMsg.t > 0) { flashMsg.t -= dt; }
+  if (feed.cd > 0) { feed.cd -= dt; }
+  if (feed.t > 0) {
+    feed.t -= dt; feed.lineT -= dt; feed.viewers += Math.floor(rnd(0, 120) * (1 + G.wanted));
+    if (feed.lineT <= 0) { feed.lineT = rnd(0.5, 1.1); feed.lines.push(pick(FEED_LINES)); if (feed.lines.length > 5) { feed.lines.shift(); } }
+  } else if (G.wanted >= 3 && Math.random() < dt * 0.05) { feedTrigger('PURSUIT'); }
+  G.chatterT -= dt;
+  if (G.chatterT <= 0) { G.chatterT = rnd(45, 80); var c = pick(CHATTER); notify(c[0], c[1]); }
+  if (G.hintT > 0) { G.hintT -= dt; }
+}
+
+function update(rdt) {
+  pollGamepad();
+  var I = readInput(), dt = rdt * G.timeScale, i;
+  handleHotkeys();
+  G.timeScale = G.wheel ? 0.2 : 1;            /* weapon wheel slows time by 80% */
+  if (G.over > 0) {
+    G.over -= rdt;
+    if (G.over <= 0 && G.overAction) { G.overAction(); G.overAction = null; }
+    I = { up: false, down: false, left: false, right: false, fire: false, fireHit: false, hb: false, act: false };
+  }
+  G.t += dt;
+  G.tod = (G.tod + dt / 480) % 1;
+  G.shake = Math.max(0, G.shake - rdt * 1.5);
+  if (G.over <= 0) { updatePlayer(dt, I); }
+  for (i = 0; i < cars.length; i++) {
+    var c = cars[i];
+    if (c.ai === 'civ') { civAI(c, dt); } else if (c.ai === 'police') { policeAI(c, dt); }
+    else if (c.ai === 'none') { c.thr = 0; c.str = 0; c.hb = true; }
+    c.drive(dt);
+  }
+  if (player.car) { player.x = player.car.x; player.y = player.car.y; }
+  collideCars(dt);
+  for (i = 0; i < peds.length; i++) { peds[i].update(dt); }
+  updateRockets(dt); updateParticles(dt);
+  mpUpdate(rdt);
+  policeDirector(dt); population(dt); missionUpdate(dt); heistUpdate(dt); updateUI(rdt);
+  keysHit = {}; touchHits = {}; mouse.hit = false;
+}
+
+
+/* ---- src/engine/16-adaptive-graphics-core-fps-telemetry-pip.js ---- */
+/* =====================================================================
+   16. ADAPTIVE GRAPHICS CORE (FPS telemetry + pipeline switching)
+   ===================================================================== */
+function setLow(v, why) {
+  if (gfx.low === v) { return; }
+  gfx.low = v; resize();
+  notify('SYSTEM', v ? 'Low FPS (' + gfx.fps + '): classic top-down pipe' + (why ? ' [' + why + ']' : '') : 'Perspective engine online', '#ffe600');
+}
+function cycleGfx() {
+  gfx.mode = gfx.mode === 'auto' ? 'top' : (gfx.mode === 'top' ? 'persp' : 'auto');
+  if (gfx.mode === 'top') { setLow(true, 'manual'); } else if (gfx.mode === 'persp') { setLow(false); }
+  flash('GRAPHICS: ' + gfx.mode.toUpperCase(), gfx.mode === 'auto' ? 'switches on 1s FPS telemetry' : '');
+}
+function telemetry(rdt) {
+  gfx.frames++; gfx.acc += rdt;
+  if (gfx.acc >= 1) {                         /* rolling 1-second buffer */
+    gfx.fps = Math.round(gfx.frames / gfx.acc); gfx.frames = 0; gfx.acc = 0;
+    if (gfx.mode !== 'auto') { return; }
+    if (gfx.fps < 25) { gfx.goodStreak = 0; setLow(true); }  /* immediate degrade */
+    else if (gfx.low && gfx.fps >= 50) { gfx.goodStreak++; if (gfx.goodStreak >= 4) { setLow(false); gfx.goodStreak = 0; } }
+    else { gfx.goodStreak = 0; }
+  }
+}
+
+
+/* ---- src/engine/17-renderer-world-top-down-pipe-pseudo-3d-p.js ---- */
+/* =====================================================================
+   17. RENDERER: WORLD (top-down pipe + pseudo-3D perspective extrusion)
+   ===================================================================== */
+var minimapCanvas = null;
+function buildMinimap() {
+  minimapCanvas = document.createElement('canvas');
+  minimapCanvas.width = 120; minimapCanvas.height = 120;
+  var m = minimapCanvas.getContext && minimapCanvas.getContext('2d'); if (!m) { minimapCanvas = null; return; }
+  var s = 120 / WORLD, bx, by, i;
+  m.fillStyle = '#0a6b8f'; m.fillRect(0, 0, 120, 120);
+  m.fillStyle = '#333'; m.fillRect(0, 0, 120, 120);
+  for (by = 0; by < NB; by++) { for (bx = 0; bx < NB; bx++) {
+    m.fillStyle = ZONE_COL[blockZone[by * NB + bx]].g; m.fillRect((bx * CELL + 40) * s, (by * CELL + 40) * s, 320 * s, 320 * s);
+  } }
+  m.fillStyle = 'rgba(255,63,164,0.8)';
+  for (i = 0; i < buildings.length; i++) { var b = buildings[i]; if (b.neon) { m.fillRect(b.x * s, b.y * s, Math.max(1, b.w * s), Math.max(1, b.h * s)); } }
+}
+
+function drawGround(vx0, vy0, vx1, vy1) {
+  var bx, by, i, z;
+  /* ocean */
+  ctx.fillStyle = '#0a5a82'; ctx.fillRect(vx0, vy0, vx1 - vx0, vy1 - vy0);
+  if (!gfx.low) {
+    ctx.fillStyle = 'rgba(120,230,255,0.18)';
+    var off = (G.t * 18) % 60;
+    for (i = Math.floor(vy0 / 60) * 60; i < vy1; i += 60) { ctx.fillRect(Math.max(vx0, WORLD + 160), i + off, 40, 2); ctx.fillRect(Math.max(vx0, WORLD + 230), i + off + 30, 30, 2); }
+  }
+  /* beach sand strip east of Ocean Drive */
+  ctx.fillStyle = '#e9d29a'; ctx.fillRect(WORLD + ROADH, -ROADH, 130, WORLD + ROADH * 2);
+  /* asphalt base for the county */
+  ctx.fillStyle = gfx.low ? '#2c2c34' : '#24232c'; ctx.fillRect(-ROADH, -ROADH, WORLD + ROADH * 2, WORLD + ROADH * 2);
+  var b0x = Math.max(0, Math.floor(vx0 / CELL)), b1x = Math.min(NB - 1, Math.floor(vx1 / CELL));
+  var b0y = Math.max(0, Math.floor(vy0 / CELL)), b1y = Math.min(NB - 1, Math.floor(vy1 / CELL));
+  for (by = b0y; by <= b1y; by++) {
+    for (bx = b0x; bx <= b1x; bx++) {
+      z = ZONE_COL[blockZone[by * NB + bx]];
+      var x0 = bx * CELL + ROADH, y0 = by * CELL + ROADH, S = CELL - ROADH * 2;
+      ctx.fillStyle = z.s; ctx.fillRect(x0, y0, S, S);                       // sidewalk
+      ctx.fillStyle = z.g; ctx.fillRect(x0 + 14, y0 + 14, S - 28, S - 28);   // lot
+      if (!gfx.low) { ctx.strokeStyle = z.edge; ctx.lineWidth = 2; ctx.strokeRect(x0 + 1, y0 + 1, S - 2, S - 2); }
+    }
+  }
+  /* swamp ponds */
+  for (i = 0; i < ponds.length; i++) {
+    var p = ponds[i]; if (p.x + p.r < vx0 || p.x - p.r > vx1 || p.y + p.r < vy0 || p.y - p.r > vy1) { continue; }
+    ctx.fillStyle = '#1d4a4a'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, PI2, false); ctx.fill();
+    if (!gfx.low) { ctx.fillStyle = 'rgba(46,229,157,0.25)'; ctx.beginPath(); ctx.arc(p.x - p.r * 0.3, p.y - p.r * 0.2, p.r * 0.3, 0, PI2, false); ctx.fill(); }
+  }
+  /* lane markings: dashed centre lines, skipped through intersections */
+  ctx.fillStyle = gfx.low ? '#77756a' : '#d8c85a';
+  var step = gfx.low ? 80 : 40, rx, ry, k;
+  for (k = Math.max(0, Math.floor(vx0 / CELL)); k <= Math.min(NB, Math.ceil(vx1 / CELL)); k++) {
+    rx = k * CELL;
+    for (ry = Math.floor(vy0 / step) * step; ry < vy1; ry += step) { var m1 = ((ry % CELL) + CELL) % CELL; if (m1 > ROADH && m1 < CELL - ROADH - 20 && ry >= 0 && ry <= WORLD) { ctx.fillRect(rx - 1.5, ry, 3, 20); } }
+  }
+  for (k = Math.max(0, Math.floor(vy0 / CELL)); k <= Math.min(NB, Math.ceil(vy1 / CELL)); k++) {
+    ry = k * CELL;
+    for (rx = Math.floor(vx0 / step) * step; rx < vx1; rx += step) { var m2 = ((rx % CELL) + CELL) % CELL; if (m2 > ROADH && m2 < CELL - ROADH - 20 && rx >= 0 && rx <= WORLD) { ctx.fillRect(rx, ry - 1.5, 20, 3); } }
+  }
+  /* zebra crossings (perspective pipe only) */
+  if (!gfx.low) {
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    for (bx = Math.max(0, Math.floor(vx0 / CELL)); bx <= Math.min(NB, Math.ceil(vx1 / CELL)); bx++) {
+      for (by = Math.max(0, Math.floor(vy0 / CELL)); by <= Math.min(NB, Math.ceil(vy1 / CELL)); by++) {
+        var cx = bx * CELL, cy = by * CELL;
+        for (i = -30; i <= 24; i += 12) { ctx.fillRect(cx + i, cy - ROADH - 6, 6, 10); ctx.fillRect(cx - ROADH - 6, cy + i, 10, 6); }
+      }
+    }
+  }
+}
+
+/* Pseudo-3D projection: a point at height h is displaced away from the
+   camera by (p - cam) * h / (CAMH - h). Buildings therefore lean outward
+   with proximity & angular displacement from the camera like a real lens. */
+function proj(px, py, h) { var k = h / (CAMH - h); return { x: px + (px - cam.x) * k, y: py + (py - cam.y) * k }; }
+
+var visB = [];
+function drawBuildings(vx0, vy0, vx1, vy1) {
+  var i, b, n = 0, margin = gfx.low ? 10 : 320;
+  visB.length = 0;
+  for (i = 0; i < buildings.length; i++) {
+    b = buildings[i];
+    if (b.x + b.w < vx0 - margin || b.x > vx1 + margin || b.y + b.h < vy0 - margin || b.y > vy1 + margin) { continue; }
+    if (!gfx.low) { b.d = dist(b.x + b.w / 2, b.y + b.h / 2, cam.x, cam.y); }
+    visB.push(b); n++;
+  }
+  if (gfx.low) {
+    /* CLASSIC TOP-DOWN PIPE: flat roofs, hard edges, no extrusion */
+    for (i = 0; i < n; i++) {
+      b = visB[i];
+      ctx.fillStyle = b.c; ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = 'rgba(0,0,0,' + clamp(0.5 - b.ht / 900, 0.05, 0.45) + ')'; ctx.fillRect(b.x + 6, b.y + 6, b.w - 12, b.h - 12);
+      if (b.neon) { ctx.strokeStyle = b.neon; ctx.lineWidth = 2; ctx.strokeRect(b.x + 3, b.y + 3, b.w - 6, b.h - 6); }
+    }
+    return;
+  }
+  visB.sort(function (p, q) { return q.d - p.d; });
+  var night = darkness();
+  for (i = 0; i < n; i++) {
+    b = visB[i];
+    var h = Math.min(b.ht, CAMH * 0.62), x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h;
+    var r00 = proj(x0, y0, h), r10 = proj(x1, y0, h), r11 = proj(x1, y1, h), r01 = proj(x0, y1, h);
+    /* walls facing the camera */
+    if (cam.y < y0) { wall(x0, y0, x1, y0, r00, r10, b, 0.55, h, night); }
+    if (cam.y > y1) { wall(x0, y1, x1, y1, r01, r11, b, 0.75, h, night); }
+    if (cam.x < x0) { wall(x0, y0, x0, y1, r00, r01, b, 0.45, h, night); }
+    if (cam.x > x1) { wall(x1, y0, x1, y1, r10, r11, b, 0.65, h, night); }
+    /* roof */
+    ctx.fillStyle = b.roof;
+    ctx.beginPath(); ctx.moveTo(r00.x, r00.y); ctx.lineTo(r10.x, r10.y); ctx.lineTo(r11.x, r11.y); ctx.lineTo(r01.x, r01.y); ctx.closePath(); ctx.fill();
+    if (b.neon) {
+      ctx.strokeStyle = b.neon; ctx.globalAlpha = 0.25 + night * 0.35; ctx.lineWidth = 8; ctx.stroke();
+      ctx.globalAlpha = 1; ctx.lineWidth = 2; ctx.stroke();
+      /* rooftop helipad / AC unit */
+      var cxr = (r00.x + r11.x) / 2, cyr = (r00.y + r11.y) / 2;
+      ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(cxr - 12, cyr - 12, 24, 24);
+    } else {
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 2; ctx.stroke();
+    }
+  }
+}
+function wall(ax, ay, bx, by, ra, rb, b, shade, h, night) {
+  ctx.fillStyle = b.c;
+  ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(rb.x, rb.y); ctx.lineTo(ra.x, ra.y); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,' + (1 - shade) + ')'; ctx.fill();
+  /* floor lines / lit windows (neon at night) */
+  var floors = Math.min(8, Math.floor(h / 40)), f;
+  if (floors > 0) {
+    ctx.strokeStyle = b.neon ? b.neon : 'rgba(255,240,200,0.5)'; ctx.globalAlpha = 0.15 + night * 0.5; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (f = 1; f <= floors; f++) {
+      var t = f / (floors + 1);
+      ctx.moveTo(ax + (ra.x - ax) * t, ay + (ra.y - ay) * t); ctx.lineTo(bx + (rb.x - bx) * t, by + (rb.y - by) * t);
+    }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+}
+function drawPalms(vx0, vy0, vx1, vy1) {
+  var i, p, j;
+  for (i = 0; i < palms.length; i++) {
+    p = palms[i]; if (p.x < vx0 - 80 || p.x > vx1 + 80 || p.y < vy0 - 80 || p.y > vy1 + 80) { continue; }
+    var top = gfx.low ? { x: p.x, y: p.y } : proj(p.x, p.y, 70 * p.s), R = 22 * p.s;
+    if (!gfx.low) { ctx.strokeStyle = '#6b4a2b'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(top.x, top.y); ctx.stroke(); }
+    ctx.fillStyle = p.mangrove ? '#2f5a2a' : '#1f9e57';
+    if (gfx.low) { ctx.beginPath(); ctx.arc(top.x, top.y, R * 0.8, 0, PI2, false); ctx.fill(); continue; }
+    for (j = 0; j < 6; j++) {
+      var a = j * PI2 / 6 + p.x;
+      ctx.beginPath(); ctx.moveTo(top.x, top.y);
+      ctx.lineTo(top.x + Math.cos(a - 0.25) * R, top.y + Math.sin(a - 0.25) * R);
+      ctx.lineTo(top.x + Math.cos(a) * R * 1.25, top.y + Math.sin(a) * R * 1.25);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = '#ffb13b'; ctx.beginPath(); ctx.arc(top.x, top.y, 3, 0, PI2, false); ctx.fill();
+  }
+}
+function drawCar(c) {
+  var s = 1 + c.z / 260, w = c.w, h = c.h, blink = Math.floor(G.t * 8) % 2;
+  ctx.save(); ctx.translate(c.x + 4 + c.z * 0.5, c.y + 5 + c.z * 0.5); ctx.rotate(c.a);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.restore();
+  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.a); ctx.scale(s, s);
+  if (c.type === 'tank') {
+    ctx.fillStyle = '#2b2b22'; ctx.fillRect(-w / 2, -h / 2, w, 9); ctx.fillRect(-w / 2, h / 2 - 9, w, 9);
+    ctx.fillStyle = c.dead ? '#2a2a2a' : c.color; ctx.fillRect(-w / 2 + 4, -h / 2 + 7, w - 8, h - 14);
+    ctx.rotate(wrapA(c.turretA - c.a));
+    ctx.fillStyle = c.dead ? '#222' : '#4a5530'; ctx.beginPath(); ctx.arc(0, 0, 12, 0, PI2, false); ctx.fill();
+    ctx.fillRect(0, -3, 40, 6); ctx.fillStyle = '#1d1d17'; ctx.fillRect(36, -4, 6, 8);
+    ctx.restore(); return;
+  }
+  ctx.fillStyle = c.dead ? '#2a2422' : c.color; ctx.fillRect(-w / 2, -h / 2, w, h);
+  if (!gfx.low) { ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(-w / 2, -h / 2, w, h * 0.3); }
+  ctx.fillStyle = c.dead ? '#111' : 'rgba(40,70,110,0.95)';
+  ctx.fillRect(w * 0.08, -h * 0.4, w * 0.2, h * 0.8); ctx.fillRect(-w * 0.36, -h * 0.38, w * 0.14, h * 0.76);
+  if (!c.dead) {
+    ctx.fillStyle = '#fff6c0'; ctx.fillRect(w / 2 - 3, -h / 2 + 2, 3, 4); ctx.fillRect(w / 2 - 3, h / 2 - 6, 3, 4);
+    ctx.fillStyle = '#ff2040'; ctx.fillRect(-w / 2, -h / 2 + 2, 2, 4); ctx.fillRect(-w / 2, h / 2 - 6, 2, 4);
+    if (c.type === 'police') {
+      ctx.fillStyle = '#1b2a6b'; ctx.fillRect(-w * 0.15, -h / 2, w * 0.3, h);
+      ctx.fillStyle = blink ? '#ff1f3d' : '#1f6dff'; ctx.fillRect(-3, -h * 0.4, 6, h * 0.4);
+      ctx.fillStyle = blink ? '#1f6dff' : '#ff1f3d'; ctx.fillRect(-3, 0, 6, h * 0.4);
+    } else if (c.type === 'fbi') {
+      ctx.fillStyle = blink ? '#1f6dff' : '#ffffff'; ctx.fillRect(w / 2 - 6, -4, 3, 8);
+    } else if (c.type === 'sport') {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(-w / 2, -2, w, 4);
+    }
+  }
+  if (c.popped) { ctx.fillStyle = '#ffe600'; ctx.fillRect(-w / 2 + 4, h / 2 - 1, 6, 2); }
+  ctx.restore();
+}
+function drawPed(p, col, shirt, isPlayer) {
+  if (p.dead) {
+    ctx.fillStyle = 'rgba(160,10,30,0.8)'; ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, PI2, false); ctx.fill();
+    ctx.fillStyle = shirt; ctx.fillRect(p.x - 5, p.y - 3, 10, 6); return;
+  }
+  var a = isPlayer ? player.a : p.a, sw = Math.sin(G.t * 12 + p.x) * 3;
+  ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(a);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.arc(2, 2, 7, 0, PI2, false); ctx.fill();
+  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(-3 + sw, -5, 5, 3); ctx.fillRect(-3 - sw, 2, 5, 3);
+  ctx.fillStyle = shirt; ctx.fillRect(-4, -6, 8, 12);
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(1, 0, 4, 0, PI2, false); ctx.fill();
+  if (isPlayer) {
+    if (player.weap > 0) { ctx.fillStyle = '#111'; ctx.fillRect(4, 3, player.weap === 3 ? 16 : 9, 3); }
+    if (player.punchT > 0) { ctx.fillStyle = col; ctx.fillRect(4, -2, 9, 4); }
+  }
+  ctx.restore();
+}
+function darkness() { return (Math.cos(G.tod * PI2) + 1) / 2; }
+
+function drawMarker(tg) {
+  var pulse = 0.5 + Math.sin(G.t * 5) * 0.5;
+  ctx.strokeStyle = '#ffe600'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(tg.x, tg.y, 30 + pulse * 10, 0, PI2, false); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,230,0,' + (0.15 + pulse * 0.15) + ')'; ctx.beginPath(); ctx.arc(tg.x, tg.y, 40, 0, PI2, false); ctx.fill();
+  if (!gfx.low) {
+    var top = proj(tg.x, tg.y, 120);
+    ctx.strokeStyle = 'rgba(255,230,0,0.4)'; ctx.lineWidth = 10; ctx.beginPath(); ctx.moveTo(tg.x, tg.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+  }
+}
+
+function renderWorld() {
+  var z = cam.zoom, sx = G.shake > 0 ? rnd(-1, 1) * G.shake * 10 : 0, sy = G.shake > 0 ? rnd(-1, 1) * G.shake * 10 : 0;
+  ctx.setTransform(RS * z, 0, 0, RS * z, RS * (VW / 2 - cam.x * z + sx), RS * (VH / 2 - cam.y * z + sy));
+  var hw = VW / 2 / z, hh = VH / 2 / z, vx0 = cam.x - hw, vy0 = cam.y - hh, vx1 = cam.x + hw, vy1 = cam.y + hh, i, e;
+  drawGround(vx0, vy0, vx1, vy1);
+  /* scorch marks grid */
+  ctx.fillStyle = 'rgba(10,6,8,0.55)';
+  for (i = 0; i < scorch.length; i++) { e = scorch[i]; if (e.x > vx0 - 70 && e.x < vx1 + 70 && e.y > vy0 - 70 && e.y < vy1 + 70) { ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, PI2, false); ctx.fill(); } }
+  /* spikes */
+  for (i = 0; i < spikes.length; i++) {
+    e = spikes[i]; ctx.fillStyle = '#888';
+    if (e.horiz) { ctx.fillRect(e.x - 4, e.y - 36, 8, 72); } else { ctx.fillRect(e.x - 36, e.y - 4, 72, 8); }
+    ctx.fillStyle = '#ffe600'; for (var k = -32; k <= 32; k += 8) { if (e.horiz) { ctx.fillRect(e.x - 2, e.y + k, 4, 3); } else { ctx.fillRect(e.x + k, e.y - 2, 3, 4); } }
+  }
+  /* cash bundles */
+  for (i = 0; i < pickups.length; i++) {
+    e = pickups[i]; var bob = Math.sin(G.t * 6 + i) * 2;
+    ctx.fillStyle = '#2ee59d'; ctx.fillRect(e.x - 6, e.y - 4 + bob, 12, 8); ctx.fillStyle = '#0f6b3f'; ctx.fillRect(e.x - 2, e.y - 4 + bob, 4, 8);
+  }
+  if (G.mission) { var tg = missionTarget(G.mission.def); if (tg) { drawMarker(tg); } }
+  for (i = 0; i < peds.length; i++) { e = peds[i]; if (e.x > vx0 - 20 && e.x < vx1 + 20 && e.y > vy0 - 20 && e.y < vy1 + 20) { drawPed(e, e.color, e.shirt, false); } }
+  if (!player.car) { drawPed(player, '#c68642', CHARS[player.ch].color, true); }
+  for (i = 0; i < cars.length; i++) { e = cars[i]; if (e.z <= 5 && e.x > vx0 - 60 && e.x < vx1 + 60 && e.y > vy0 - 60 && e.y < vy1 + 60) { drawCar(e); } }
+  mpDrawWorld();
+  drawBuildings(vx0, vy0, vx1, vy1);
+  drawPalms(vx0, vy0, vx1, vy1);
+  for (i = 0; i < cars.length; i++) { e = cars[i]; if (e.z > 5) { drawCar(e); } }   // airborne cars above roofs
+  /* rockets */
+  for (i = 0; i < rockets.length; i++) {
+    e = rockets[i]; ctx.fillStyle = e.kind === 'shell' ? '#ffe600' : '#ddd';
+    ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(e.a); ctx.fillRect(-6, -2, 12, 4); ctx.fillStyle = '#ff8a1f'; ctx.fillRect(-10, -2, 4, 4); ctx.restore();
+  }
+  /* particles */
+  var lim = gfx.low ? 90 : PMAX;
+  for (i = 0; i < lim; i++) {
+    e = parts[i]; if (!e.on) { continue; }
+    var f = e.life / e.max;
+    ctx.globalAlpha = e.type === 1 ? f * 0.6 : (e.type === 4 ? f : Math.min(1, f * 1.5));
+    ctx.fillStyle = e.c;
+    var sz = e.type === 0 ? e.size * f : e.size;
+    if (e.type === 3) { ctx.fillRect(e.x - sz / 2, e.y - sz / 2 - e.z * 0.5, sz, sz); }
+    else { ctx.beginPath(); ctx.arc(e.x, e.y, Math.max(0.5, sz), 0, PI2, false); ctx.fill(); }
+  }
+  ctx.globalAlpha = 1;
+  /* tracers (pistol = precision laser line) */
+  for (i = 0; i < tracers.length; i++) {
+    e = tracers[i]; ctx.strokeStyle = e.c; ctx.lineWidth = 1.5; ctx.globalAlpha = Math.min(1, e.t * 14);
+    ctx.beginPath(); ctx.moveTo(e.x1, e.y1); ctx.lineTo(e.x2, e.y2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  /* aim laser for pistol on foot */
+  if (!player.car && player.weap === 1 && !usingTouch) {
+    ctx.strokeStyle = 'rgba(255,63,164,0.35)'; ctx.lineWidth = 1; ctx.beginPath();
+    ctx.moveTo(player.x, player.y); ctx.lineTo(player.x + Math.cos(player.aim) * 160, player.y + Math.sin(player.aim) * 160); ctx.stroke();
+  }
+}
+
+
+/* ---- src/engine/18-renderer-hud-phone-wheel-console-touch-c.js ---- */
+/* =====================================================================
+   18. RENDERER: HUD, PHONE, WHEEL, CONSOLE, TOUCH CONTROLS
+   ===================================================================== */
+function font(px, bold) { ctx.font = (bold ? 'bold ' : '') + Math.round(px) + 'px "Courier New", Courier, monospace'; }
+function text(s, x, y, c, align) { ctx.textAlign = align || 'left'; ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillText(s, x + 1.5, y + 1.5); ctx.fillStyle = c; ctx.fillText(s, x, y); }
+function rrect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+}
+function wrapLines(s, maxW) {
+  var words = s.split(' '), lines = [], cur = '', i;
+  for (i = 0; i < words.length; i++) {
+    var test = cur ? cur + ' ' + words[i] : words[i];
+    if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = words[i]; } else { cur = test; }
+  }
+  if (cur) { lines.push(cur); }
+  return lines;
+}
+function drawStar(cx, cy, r, fill) {
+  ctx.beginPath();
+  for (var i = 0; i < 10; i++) { var a = -PI / 2 + i * PI / 5, rr = i % 2 ? r * 0.45 : r; ctx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+  ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+}
+function weaponIcon(i, x, y, s) {
+  ctx.fillStyle = '#fff';
+  if (i === 0) { ctx.beginPath(); ctx.arc(x, y, s * 0.3, 0, PI2, false); ctx.fill(); ctx.fillRect(x - s * 0.3, y - s * 0.35, s * 0.6, s * 0.18); }
+  else if (i === 1) { ctx.fillRect(x - s * 0.35, y - s * 0.2, s * 0.7, s * 0.16); ctx.fillRect(x - s * 0.35, y - s * 0.2, s * 0.18, s * 0.5); }
+  else if (i === 2) { ctx.fillRect(x - s * 0.4, y - s * 0.18, s * 0.8, s * 0.2); ctx.fillRect(x - s * 0.05, y, s * 0.14, s * 0.4); ctx.fillRect(x - s * 0.4, y - s * 0.05, s * 0.16, s * 0.3); }
+  else { ctx.fillRect(x - s * 0.45, y - s * 0.08, s * 0.8, s * 0.16); ctx.beginPath(); ctx.moveTo(x + s * 0.35, y - s * 0.18); ctx.lineTo(x + s * 0.5, y); ctx.lineTo(x + s * 0.35, y + s * 0.18); ctx.fill(); }
+}
+
+function drawHUD() {
+  ctx.setTransform(RS, 0, 0, RS, 0, 0);
+  var u = U, blink = Math.floor(G.t * 6) % 2 === 0, i, x, y;
+  /* day-night tint + vice sunset gradient */
+  var dk = darkness();
+  ctx.fillStyle = 'rgba(25,0,60,' + (dk * 0.42).toFixed(3) + ')'; ctx.fillRect(0, 0, VW, VH);
+  if (!gfx.low) {
+    if (!sunsetGrad && ctx.createLinearGradient) {
+      sunsetGrad = ctx.createLinearGradient(0, 0, 0, VH);
+      sunsetGrad.addColorStop(0, 'rgba(255,63,164,0.18)'); sunsetGrad.addColorStop(0.5, 'rgba(155,92,255,0)'); sunsetGrad.addColorStop(1, 'rgba(63,246,255,0.12)');
+    }
+    if (sunsetGrad) { ctx.fillStyle = sunsetGrad; ctx.fillRect(0, 0, VW, VH); }
+  }
+  /* --- TOP RIGHT: cash / health / armor / weapon / stars --- */
+  var R = VW - 10 * u, top = 10 * u, bw = 132 * u;
+  font(22 * u, true); text('$' + pad8(G.cash), R, top + 20 * u, '#2ee59d', 'right');
+  y = top + 30 * u;
+  var hpLow = player.hp < 25, arLow = player.armor > 0 && player.armor < 25;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(R - bw, y, bw, 8 * u); ctx.fillRect(R - bw, y + 11 * u, bw, 6 * u);
+  ctx.fillStyle = hpLow && blink ? '#ffffff' : '#ff3fa4'; ctx.fillRect(R - bw, y, bw * player.hp / 100, 8 * u);
+  ctx.fillStyle = arLow && blink ? '#ffffff' : '#3ff6ff'; ctx.fillRect(R - bw, y + 11 * u, bw * player.armor / 100, 6 * u);
+  y += 22 * u;
+  var box = 30 * u;
+  ctx.fillStyle = 'rgba(20,0,40,0.7)'; ctx.fillRect(R - box, y, box, box);
+  ctx.strokeStyle = '#9b5cff'; ctx.lineWidth = 2; ctx.strokeRect(R - box, y, box, box);
+  var inTank = player.car && player.car.type === 'tank';
+  weaponIcon(inTank ? 3 : player.weap, R - box / 2, y + box / 2, box * 0.8);
+  font(12 * u, true);
+  text(inTank ? 'CANNON  INF' : (WEAPONS[player.weap].name + ' ' + (player.weap === 0 ? '--' : player.ammo[player.weap])), R - box - 6 * u, y + box * 0.65, '#ffffff', 'right');
+  y += box + 14 * u;
+  for (i = 0; i < 5; i++) {
+    var on = i < G.wanted, evading = G.wanted > 0 && G.t - G.lastSeen > 2;
+    drawStar(R - 8 * u - i * 18 * u, y, 7.5 * u, on ? ((evading && blink) ? '#888' : '#ffe600') : 'rgba(255,255,255,0.15)');
+  }
+  /* --- TOP LEFT: protagonist + relationship stats + minimap --- */
+  var L = 10 * u; font(13 * u, true); text(CHARS[player.ch].name, L, top + 12 * u, CHARS[player.ch].color);
+  font(10 * u, false); text('TRUST ' + G.trust + '  JOBS ' + G.jobs + '  SCORE ' + G.score, L, top + 25 * u, '#e0d0ff');
+  var mm = Math.round(84 * u), my = top + 32 * u;
+  if (minimapCanvas && VH > 300) {
+    ctx.globalAlpha = 0.85; ctx.drawImage(minimapCanvas, L, my, mm, mm); ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#ff3fa4'; ctx.lineWidth = 2; ctx.strokeRect(L, my, mm, mm);
+    var s = mm / WORLD;
+    for (i = 0; i < cars.length; i++) { if (cars[i].role && !cars[i].dead) { ctx.fillStyle = blink ? '#ff1f3d' : '#1f6dff'; ctx.fillRect(L + cars[i].x * s - 1.5, my + cars[i].y * s - 1.5, 3, 3); } }
+    if (G.mission) { var tg = missionTarget(G.mission.def); if (tg) { ctx.fillStyle = '#ffe600'; ctx.fillRect(L + tg.x * s - 3, my + tg.y * s - 3, 6, 6); } }
+    mpMinimap(L, my, s);
+    ctx.fillStyle = '#fff'; ctx.fillRect(L + player.x * s - 2, my + player.y * s - 2, 4, 4);
+    font(9 * u, false); text(gfx.fps + 'FPS ' + (gfx.low ? 'TOP-DOWN' : 'PERSP-3D') + (G.gravMul < 1 ? ' LOWG' : ''), L, my + mm + 11 * u, '#9b8fbf');
+  }
+  /* --- objective line & off-screen arrow --- */
+  var narrow = VW < 560, ty = narrow ? top + 150 * u : top + 4 * u;
+  if (G.mission) {
+    var m = G.mission.def, obj = m.type === 'goto' ? 'Go to ' + (m.loc ? LOC[m.loc].name : 'the GPS mark') :
+      (m.type === 'deliver' ? 'Deliver a car to ' + (m.loc ? LOC[m.loc].name : 'the GPS mark') :
+      (m.type === 'heist' ? 'Open the phone (P) > HEIST app' : 'Lose your wanted level'));
+    font(12 * u, true); text(m.name.toUpperCase() + ': ' + obj, VW / 2, ty + 12 * u, '#ffe600', 'center');
+    var tgt = missionTarget(m);
+    if (tgt) {
+      var sx2 = (tgt.x - cam.x) * cam.zoom + VW / 2, sy2 = (tgt.y - cam.y) * cam.zoom + VH / 2;
+      if (sx2 < 0 || sx2 > VW || sy2 < 0 || sy2 > VH) {
+        var aa = Math.atan2(sy2 - VH / 2, sx2 - VW / 2), ar = Math.min(VW, VH) * 0.38;
+        var axp = VW / 2 + Math.cos(aa) * ar, ayp = VH / 2 + Math.sin(aa) * ar;
+        ctx.save(); ctx.translate(axp, ayp); ctx.rotate(aa); ctx.fillStyle = '#ffe600';
+        ctx.beginPath(); ctx.moveTo(14 * u, 0); ctx.lineTo(-8 * u, -9 * u); ctx.lineTo(-8 * u, 9 * u); ctx.closePath(); ctx.fill(); ctx.restore();
+      }
+    }
+  }
+  /* --- phone notification toasts --- */
+  var tw = narrow ? VW - 20 * u : 300 * u, tx = narrow ? 10 * u : VW / 2 - tw / 2, ty2 = ty + 20 * u;
+  for (i = 0; i < toasts.length; i++) {
+    var t = toasts[i]; font(11 * u, false);
+    var lines = wrapLines(t.text, tw - 20 * u), th = (18 + lines.length * 13) * u;
+    ctx.globalAlpha = Math.min(1, t.t * 2);
+    ctx.fillStyle = 'rgba(15,0,30,0.85)'; rrect(tx, ty2, tw, th, 8 * u); ctx.fill();
+    ctx.strokeStyle = t.c; ctx.lineWidth = 1.5; ctx.stroke();
+    font(10 * u, true); text(t.from + '  ' + (t.from === 'ROSA' || t.from === 'DEX' ? '[iMessage]' : ''), tx + 10 * u, ty2 + 13 * u, t.c);
+    font(11 * u, false);
+    for (var l = 0; l < lines.length; l++) { text(lines[l], tx + 10 * u, ty2 + (27 + l * 13) * u, '#ffffff'); }
+    ctx.globalAlpha = 1; ty2 += th + 5 * u;
+  }
+  /* --- FlexTok live feed parody --- */
+  if (feed.t > 0) {
+    var fw = Math.min(170 * u, VW * 0.46), fh = 128 * u, fx = 8 * u, fy = Math.max(ty2 + 4 * u, VH * 0.36);
+    if (fy + fh > VH - 150 * u && usingTouch) { fy = Math.max(ty2, VH - 150 * u - fh); }
+    ctx.globalAlpha = Math.min(1, feed.t);
+    ctx.fillStyle = 'rgba(0,0,0,0.72)'; rrect(fx, fy, fw, fh, 10 * u); ctx.fill(); ctx.strokeStyle = '#ff3fa4'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#ff1f3d'; ctx.fillRect(fx + 8 * u, fy + 8 * u, 38 * u, 14 * u);
+    font(10 * u, true); text('LIVE', fx + 27 * u, fy + 19 * u, '#fff', 'center');
+    text(Math.round(feed.viewers / 100) / 10 + 'K watching', fx + 52 * u, fy + 19 * u, '#fff');
+    font(10 * u, true); text('FlexTok  ' + feed.handle, fx + 8 * u, fy + 36 * u, '#3ff6ff');
+    font(10 * u, false);
+    for (i = 0; i < feed.lines.length; i++) { text(feed.lines[i].length > 24 ? feed.lines[i].substr(0, 24) : feed.lines[i], fx + 8 * u, fy + (52 + i * 14) * u, i === feed.lines.length - 1 ? '#ffe600' : '#ddd'); }
+    ctx.globalAlpha = 1;
+  }
+  mpDrawHUD();
+  /* --- retro flashing center message --- */
+  if (flashMsg.t > 0) {
+    var cols = ['#ff3fa4', '#3ff6ff', '#ffe600', '#9b5cff'];
+    font(26 * u, true); text(flashMsg.a, VW / 2, VH * 0.42, cols[Math.floor(G.t * 10) % 4], 'center');
+    if (flashMsg.b) { font(13 * u, true); text(flashMsg.b, VW / 2, VH * 0.42 + 22 * u, '#ffffff', 'center'); }
+  }
+  /* --- intro controls hint --- */
+  if (G.hintT > 0 && !G.phone) {
+    font(11 * u, false);
+    var hint = pad.on ? 'L-stick move/steer | R2 gas/fire | L2 brake | R1 fire | TRIANGLE car | L1 wheel | OPTIONS phone | SQUARE switch' : usingTouch ? 'D-PAD move | GAS/BRK drive | ENTER car | FIRE | WPN wheel | PHONE | 3x tap top-left = cheats'
+      : 'WASD/Arrows move | E enter car | Click/J fire | Q wheel | P phone | C switch | G graphics | ~ console';
+    var hl = wrapLines(hint, VW - 40 * u);
+    for (i = 0; i < hl.length; i++) { text(hl[i], VW / 2, VH * 0.62 + i * 14 * u, '#e0d0ff', 'center'); }
+  }
+  /* --- busted / flatlined --- */
+  if (G.over > 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, VW, VH);
+    font(40 * u, true); text(G.overText, VW / 2, VH / 2, G.overText === 'CUFFED' ? '#3ff6ff' : '#ff1f3d', 'center');
+    font(12 * u, false); text(G.overSub, VW / 2, VH / 2 + 26 * u, '#fff', 'center');
+  }
+}
+
+function btn(x, y, w, h, label, c, fn, sub) {
+  ctx.fillStyle = 'rgba(30,5,60,0.9)'; rrect(x, y, w, h, 6 * U); ctx.fill();
+  ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.stroke();
+  font(11 * U, true); text(label, x + w / 2, y + h / 2 + (sub ? -1 : 4) * U, c, 'center');
+  if (sub) { font(9 * U, false); text(sub, x + w / 2, y + h / 2 + 11 * U, '#ccc', 'center'); }
+  uiButtons.push({ x: x, y: y, w: w, h: h, fn: fn });
+}
+
+var phoneRect = { x: 0, y: 0, w: 0, h: 0 };
+var PHONE_APPS = [
+  { id: 'heist', label: 'HEIST', c: '#2ee59d' }, { id: 'jobs', label: 'JOBS', c: '#ffe600' },
+  { id: 'trust', label: 'TRUST', c: '#ff3fa4' }, { id: 'feed', label: 'FLEXTOK', c: '#3ff6ff' },
+  { id: 'settings', label: 'SETTINGS', c: '#9b5cff' }, { id: 'switch', label: 'SWITCH', c: '#ff8a1f' },
+  { id: 'online', label: 'ONLINE', c: '#2ee59d' }
+];
+function phoneKey(i) { if (G.page === 'home') { openApp(PHONE_APPS[i].id); } else if (i === 0) { G.page = 'home'; } }
+function openApp(id) {
+  if (id === 'switch') { switchChar(); return; }
+  G.page = id;
+}
+function drawPhone() {
+  var u = U, pw = Math.min(VW * 0.88, 230 * u), ph = Math.min(VH * 0.8, 400 * u);
+  var px = VW > 640 ? VW - pw - 24 * u : (VW - pw) / 2, py = (VH - ph) / 2 - (usingTouch ? 20 * u : 0);
+  phoneRect.x = px; phoneRect.y = py; phoneRect.w = pw; phoneRect.h = ph;
+  ctx.fillStyle = '#0c0c12'; rrect(px, py, pw, ph, 18 * u); ctx.fill(); ctx.strokeStyle = '#ff3fa4'; ctx.lineWidth = 3; ctx.stroke();
+  var sx = px + 10 * u, sy = py + 26 * u, sw = pw - 20 * u, sh = ph - 46 * u;
+  var g = ctx.createLinearGradient && !gfx.low ? ctx.createLinearGradient(0, sy, 0, sy + sh) : null;
+  if (g) { g.addColorStop(0, '#3a0b5c'); g.addColorStop(1, '#0b3a5c'); ctx.fillStyle = g; } else { ctx.fillStyle = '#25103d'; }
+  ctx.fillRect(sx, sy, sw, sh);
+  font(10 * u, true); text('PALMETTO OS', sx + 6 * u, py + 18 * u, '#fff');
+  var hh = Math.floor(G.tod * 24), mmn = Math.floor((G.tod * 24 - hh) * 60);
+  text((hh < 10 ? '0' : '') + hh + ':' + (mmn < 10 ? '0' : '') + mmn, sx + sw - 6 * u, py + 18 * u, '#fff', 'right');
+  var cx = sx + 10 * u, cw = sw - 20 * u, y = sy + 12 * u, i;
+  if (G.page === 'home') {
+    var cols = 2, gw = (cw - 10 * u) / cols, gh = Math.min(58 * u, (sh - 70 * u) / 4);
+    for (i = 0; i < PHONE_APPS.length; i++) {
+      (function (app, idx) {
+        btn(cx + (idx % cols) * (gw + 10 * u), y + Math.floor(idx / cols) * (gh + 8 * u), gw, gh, app.label, app.c, function () { openApp(app.id); }, '[' + (idx < 4 ? (idx + 1) : '-') + ']');
+      })(PHONE_APPS[i], i);
+    }
+  } else {
+    btn(cx, sy + sh - 34 * u, cw, 26 * u, '< BACK', '#ffffff', function () { G.page = 'home'; });
+    font(14 * u, true); text(G.page === 'feed' ? 'FLEXTOK' : G.page.toUpperCase(), cx, y + 12 * u, '#ffe600'); y += 30 * u;
+    font(10 * u, false);
+    var para = function (s, c) { var ls = wrapLines(s, cw); for (var k = 0; k < ls.length; k++) { text(ls[k], cx, y, c || '#eee'); y += 13 * u; } y += 4 * u; };
+    if (G.page === 'heist') {
+      para('Target: Coral Bay Federal Credit server. Payout $50,000. Trace risk 35% (2-star investigation).');
+      if (G.heist.run) {
+        ctx.fillStyle = '#111'; ctx.fillRect(cx, y, cw, 14 * u); ctx.fillStyle = '#2ee59d'; ctx.fillRect(cx, y, cw * G.heist.prog, 14 * u);
+        y += 22 * u; para('> bruteforcing ' + Math.floor(G.heist.prog * 100) + '% ...', '#2ee59d');
+      } else if (G.heist.cd > 0) { para('Server cooling down: ' + Math.ceil(G.heist.cd) + 's', '#ff8a1f'); }
+      else { btn(cx, y, cw, 34 * u, 'RUN EXPLOIT', '#2ee59d', runHeist); }
+    } else if (G.page === 'jobs') {
+      if (G.mission) { para('ACTIVE: ' + G.mission.def.name, '#ffe600'); para(G.mission.def.text);
+        btn(cx, y, cw, 28 * u, 'ABANDON JOB', '#ff3b1f', function () { G.mission = null; G.missionDelay = 15; G.trust = clamp(G.trust - 2, 0, 100); });
+      } else { para('No active job. Next one in ' + Math.max(0, Math.ceil(G.missionDelay)) + 's.');
+        btn(cx, y, cw, 28 * u, 'CALL FOR WORK NOW', '#ffe600', function () { G.missionDelay = 0; }); }
+      y += 40 * u; para('Story progress: ' + Math.min(G.missionIdx, STORY.length) + '/' + STORY.length, '#ccc');
+    } else if (G.page === 'trust') {
+      para('ROSA + DEX', '#ff3fa4');
+      ctx.fillStyle = '#111'; ctx.fillRect(cx, y, cw, 12 * u); ctx.fillStyle = '#ff3fa4'; ctx.fillRect(cx, y, cw * G.trust / 100, 12 * u); y += 22 * u;
+      para(G.trust > 75 ? '"Ride or die. Literally."' : (G.trust > 40 ? '"We are good. Mostly."' : '"Are you even listening to me?"'));
+      para('Jobs: ' + G.jobs + '   Score: ' + G.score);
+      para('Active: ' + CHARS[player.ch].name + ' - ' + CHARS[player.ch].perk, CHARS[player.ch].color);
+    } else if (G.page === 'feed') {
+      para('Followers: ' + G.followers, '#3ff6ff');
+      para('Chaos goes viral. Pursuits and explosions get streamed live by bystanders.');
+      btn(cx, y, cw, 28 * u, 'GO LIVE NOW', '#3ff6ff', function () { feed.cd = 0; feedTrigger('SELFIE'); });
+    } else if (G.page === 'online') {
+      para('Status: ' + MP.status, MP.on ? '#2ee59d' : '#ff8a1f');
+      para('You: ' + MP.name);
+      var nm = []; for (var pid in MP.players) { if (MP.players.hasOwnProperty(pid)) { nm.push(MP.players[pid].name); } }
+      para(nm.length ? 'In lobby: ' + nm.join(', ') : 'No other players yet.');
+      btn(cx, y, cw, 28 * u, MP.on ? 'RECONNECT' : 'JOIN LOBBY', '#2ee59d', mpJoinPrompt); y += 36 * u;
+      para('Host: run node manager.js --serve on a PC, open http://PC-IP:8080 on every device (PC, phone, PS4/PS5).', '#aaa');
+    } else if (G.page === 'settings') {
+      btn(cx, y, cw, 28 * u, 'GRAPHICS: ' + gfx.mode.toUpperCase(), '#9b5cff', cycleGfx); y += 34 * u;
+      btn(cx, y, cw, 28 * u, 'CONTROLS: ' + (usingTouch ? 'TOUCH' : 'KEYS'), '#9b5cff', function () { usingTouch = !usingTouch; }); y += 34 * u;
+      btn(cx, y, cw, 28 * u, 'SAVE GAME', '#9b5cff', function () { save(); flash('SAVED', ''); }); y += 34 * u;
+      para('FPS ' + gfx.fps + ' | ' + (gfx.low ? 'top-down' : 'perspective') + ' | host: ' + hostName(), '#aaa');
+    }
+  }
+}
+function wheelSlotAt(x, y) {
+  var a = Math.atan2(y - VH / 2, x - VW / 2);           // 0 top, 1 right, 2 bottom, 3 left
+  var s = Math.round(wrapA(a + PI / 2) / (PI / 2)); return ((s % 4) + 4) % 4;
+}
+function drawWheel() {
+  var cx = VW / 2, cy = VH / 2, R = Math.min(VW, VH) * 0.34, r = R * 0.38, i;
+  ctx.fillStyle = 'rgba(10,0,25,0.55)'; ctx.fillRect(0, 0, VW, VH);
+  for (i = 0; i < 4; i++) {
+    var a0 = -PI / 2 + i * PI / 2 - PI / 4, a1 = a0 + PI / 2, sel = i === G.wheelSel;
+    ctx.beginPath(); ctx.arc(cx, cy, R, a0, a1, false); ctx.arc(cx, cy, r, a1, a0, true); ctx.closePath();
+    ctx.fillStyle = sel ? 'rgba(255,63,164,0.55)' : 'rgba(30,10,60,0.8)'; ctx.fill();
+    ctx.strokeStyle = sel ? '#ffe600' : '#3ff6ff'; ctx.lineWidth = 2; ctx.stroke();
+    var am = (a0 + a1) / 2, ix = cx + Math.cos(am) * (R + r) / 2, iy = cy + Math.sin(am) * (R + r) / 2;
+    ctx.globalAlpha = player.owned[i] ? 1 : 0.3; weaponIcon(i, ix, iy - 6 * U, 30 * U); ctx.globalAlpha = 1;
+    font(10 * U, true); text(WEAPONS[i].name, ix, iy + 18 * U, player.owned[i] ? '#fff' : '#777', 'center');
+    if (i > 0 && player.owned[i]) { font(9 * U, false); text('' + player.ammo[i], ix, iy + 30 * U, '#ffe600', 'center'); }
+  }
+  font(10 * U, true); text('TIME x0.2', cx, cy + 4 * U, '#ffe600', 'center');
+}
+function drawConsole() {
+  var h = (34 + G.conLog.length * 14) * U;
+  ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(0, 0, VW, h); ctx.strokeStyle = '#2ee59d'; ctx.strokeRect(0, 0, VW, h);
+  font(12 * U, true);
+  for (var i = 0; i < G.conLog.length; i++) { text(G.conLog[i].substr(0, 60), 10 * U, (16 + i * 14) * U, '#9fffcf'); }
+  text('> ' + G.conText + (Math.floor(G.t * 3) % 2 ? '_' : ''), 10 * U, h - 10 * U, '#2ee59d');
+}
+function drawCheatPad() {
+  var keysL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''), all = keysL.concat(['DEL', 'OK', 'X']), cols = 6;
+  var cell = Math.min((VW - 16) / cols, (VH * 0.55) / 5), x0 = (VW - cell * cols) / 2, y0 = VH - cell * 5 - 10, i;
+  ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, y0 - 44 * U, VW, VH - y0 + 44 * U);
+  font(16 * U, true); text('CODE: ' + G.padText + '_', VW / 2, y0 - 16 * U, '#2ee59d', 'center');
+  for (i = 0; i < all.length; i++) {
+    (function (k, idx) {
+      btn(x0 + (idx % cols) * cell + 2, y0 + Math.floor(idx / cols) * cell + 2, cell - 4, cell - 4, k, k === 'OK' ? '#2ee59d' : (k === 'X' ? '#ff3b1f' : '#3ff6ff'), function () {
+        if (k === 'DEL') { G.padText = G.padText.slice(0, -1); }
+        else if (k === 'OK') { if (!runCheat(G.padText)) { flash('INVALID CODE', ''); } G.padText = ''; G.pad = false; }
+        else if (k === 'X') { G.pad = false; }
+        else if (G.padText.length < 30) { G.padText += k; }
+      });
+    })(all[i], i);
+  }
+}
+function drawTouch() {
+  var u = U, d = TB.dpad, ts = touchState(), i;
+  ctx.globalAlpha = 0.75;
+  ctx.strokeStyle = '#3ff6ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, PI2, false); ctx.stroke();
+  var dirs = [[0, -1, ts.up], [1, 0, ts.right], [0, 1, ts.down], [-1, 0, ts.left]];
+  for (i = 0; i < 4; i++) {
+    var bx = d.x + dirs[i][0] * d.r * 0.62, by = d.y + dirs[i][1] * d.r * 0.62;
+    ctx.fillStyle = dirs[i][2] ? 'rgba(63,246,255,0.8)' : 'rgba(20,0,40,0.6)';
+    ctx.beginPath(); ctx.arc(bx, by, d.r * 0.33, 0, PI2, false); ctx.fill(); ctx.stroke();
+    ctx.save(); ctx.translate(bx, by); ctx.rotate(Math.atan2(dirs[i][1], dirs[i][0])); ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.moveTo(8 * u, 0); ctx.lineTo(-5 * u, -7 * u); ctx.lineTo(-5 * u, 7 * u); ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+  var list = [['fire', ts.fire], ['gas', ts.gas], ['brake', ts.brake], ['act', false], ['weap', G.wheel], ['phone', G.phone]];
+  for (i = 0; i < list.length; i++) {
+    var b = TB[list[i][0]];
+    ctx.fillStyle = list[i][1] ? b.c : 'rgba(20,0,40,0.65)'; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, PI2, false); ctx.fill();
+    ctx.strokeStyle = b.c; ctx.lineWidth = 2.5; ctx.stroke();
+    font(Math.max(8, b.r * 0.42), true); text(b.label, b.x, b.y + b.r * 0.16, '#fff', 'center');
+  }
+  ctx.globalAlpha = 1;
+}
+
+function render() {
+  uiButtons.length = 0;
+  ctx.setTransform(RS, 0, 0, RS, 0, 0);
+  renderWorld();
+  drawHUD();
+  if (G.phone) { drawPhone(); }
+  if (usingTouch && G.over <= 0) { drawTouch(); }
+  if (G.wheel) { drawWheel(); }
+  if (G.pad) { drawCheatPad(); }
+  if (G.console) { drawConsole(); }
+}
+
+
+/* ---- src/engine/19-camera.js ---- */
+/* =====================================================================
+   19. CAMERA
+   ===================================================================== */
+function updateCamera(dt) {
+  var P = playerPos(), base = clamp(Math.min(VW, VH) / 720, 0.42, 1.15);
+  var sp = player.car ? Math.abs(player.car.v) : 0;
+  var target = base * (1 - clamp(sp / 900, 0, 0.35));
+  cam.zoom += (target - cam.zoom) * (1 - Math.exp(-dt * 2));
+  var lead = player.car ? 0.35 : 0;
+  /* frame-rate independent critically-damped follow */
+  cam.lx += ((P.vx * lead) - cam.lx) * (1 - Math.exp(-dt * 2.5)); cam.ly += ((P.vy * lead) - cam.ly) * (1 - Math.exp(-dt * 2.5));
+  var tx = P.x + cam.lx, ty = P.y + cam.ly, k = 1 - Math.exp(-dt * 7);
+  cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k;
+}
+
+
+/* ---- src/engine/20-save-load-localstorage-guarded-for-hosts.js ---- */
+/* =====================================================================
+   20. SAVE / LOAD (localStorage, guarded for hosts without storage)
+   ===================================================================== */
+function save() {
+  try { if (window.localStorage && window.JSON) {
+    window.localStorage.setItem('neontide_save', JSON.stringify({ cash: G.cash, score: G.score, trust: G.trust, jobs: G.jobs, mi: G.missionIdx, ch: player.ch, owned: player.owned, ammo: player.ammo, followers: G.followers }));
+  } } catch (e) { }
+}
+function load() {
+  try { if (window.localStorage && window.JSON) {
+    var s = window.localStorage.getItem('neontide_save'); if (!s) { return; }
+    var d = JSON.parse(s); G.cash = d.cash || 0; G.score = d.score || 0; G.trust = d.trust || 50; G.jobs = d.jobs || 0;
+    G.missionIdx = d.mi || 0; player.ch = d.ch || 0; G.followers = d.followers || 1200;
+    if (d.owned) { player.owned = d.owned; } if (d.ammo) { player.ammo = d.ammo; }
+  } } catch (e) { }
+}
+
+
+/* ---- src/engine/21-native-host-hooks-cordova-capacitor-elec.js ---- */
+/* =====================================================================
+   21. NATIVE HOST HOOKS (Cordova, Capacitor, Electron, NW.js)
+   ===================================================================== */
+function hostName() {
+  return PLATFORM.electron ? 'electron' : (PLATFORM.nw ? 'nw.js' : (PLATFORM.capacitor ? 'capacitor' : (window.cordova ? 'cordova' : (PLATFORM.android ? 'android-web' : 'browser'))));
+}
+function pauseGame() { G.paused = true; save(); }
+function resumeGame() { G.paused = false; warmup = 1.5; gfx.frames = 0; gfx.acc = 0; }
+function backButton() {
+  if (G.console) { G.console = false; } else if (G.pad) { G.pad = false; } else if (G.wheel) { G.wheel = false; }
+  else if (G.phone && G.page !== 'home') { G.page = 'home'; } else { togglePhone(); }
+}
+function lockLandscape() {
+  try {
+    var so = window.screen && window.screen.orientation;
+    if (so && so.lock) { var r = so.lock('landscape'); if (r && r['catch']) { r['catch'](function () { }); } }
+  } catch (e) { }
+}
+function initHosts() {
+  /* Cordova: lifecycle + hardware back button + keep screen awake */
+  on(document, 'deviceready', function () {
+    PLATFORM.cordova = true; lockLandscape();
+    on(document, 'backbutton', function (e) { stop(e); backButton(); });
+    on(document, 'pause', pauseGame); on(document, 'resume', resumeGame);
+    if (window.plugins && window.plugins.insomnia) { window.plugins.insomnia.keepAwake(); }
+    if (window.StatusBar && window.StatusBar.hide) { window.StatusBar.hide(); }
+  });
+  /* Capacitor: global bridge (no imports needed inside the WebView) */
+  var cap = window.Capacitor;
+  if (cap && cap.Plugins && cap.Plugins.App && cap.Plugins.App.addListener) {
+    cap.Plugins.App.addListener('backButton', function () { backButton(); });
+    cap.Plugins.App.addListener('appStateChange', function (st) { if (st && st.isActive) { resumeGame(); } else { pauseGame(); } });
+    lockLandscape();
+  }
+  /* Android intents forwarded by a wrapper: window.NeonTide.intent('cheat', 'MONEYRAIN') */
+  /* NW.js: F11 fullscreen */
+  if (PLATFORM.nw && window.nw && window.nw.Window) {
+    on(window, 'keydown', function (e) { if ((e.keyCode || e.which) === 122) { window.nw.Window.get().toggleFullscreen(); } });
+  }
+  /* Browser/WebView lifecycle */
+  on(document, 'visibilitychange', function () { if (document.hidden) { pauseGame(); } else { resumeGame(); } });
+  on(window, 'blur', function () { keys = {}; });
+}
+/* Public API for host wrappers, automated test rigs and the hot-reloader. */
+window.NeonTide = {
+  version: '1.0.0',
+  pause: pauseGame, resume: resumeGame, save: save,
+  cheat: function (c) { return runCheat(c); },
+  setGraphics: function (m) { gfx.mode = m; if (m === 'top') { setLow(true, 'host'); } else if (m === 'persp') { setLow(false); } },
+  intent: function (action, data) { if (action === 'cheat') { runCheat(data); } else if (action === 'phone') { togglePhone(); } else if (action === 'back') { backButton(); } },
+  state: function () { return { fps: gfx.fps, low: gfx.low, wanted: G.wanted, cash: G.cash, hp: player.hp, armor: player.armor, inCar: !!player.car, cars: cars.length, peds: peds.length, police: countPolice(), gravity: G.gravMul, weapon: player.weap, ammo: player.ammo.slice(0), t: G.t, mission: G.mission ? G.mission.def.name : null }; },
+  debug: { G: G, player: player, cars: cars, gfx: gfx, MP: MP }
+};
+function countPolice() { var n = 0; for (var i = 0; i < cars.length; i++) { if (cars[i].role && cars[i].ai === 'police') { n++; } } return n; }
+
+
+/* ---- src/engine/22-boot-main-loop.js ---- */
+/* =====================================================================
+   22. BOOT & MAIN LOOP
+   ===================================================================== */
+function clock() { return (window.performance && window.performance.now) ? window.performance.now() : now(); }
+var lastT = clock(), errCount = 0, smoothDt = 1 / 60, warmup = 1.5;
+/* SMOOTH FRAME PACING: high-resolution timestamp when available, then an
+   exponential moving average of the frame delta so one late frame does not
+   jerk the camera / physics. Hitches above 100 ms are treated as a pause. */
+function frame() {
+  var t = clock();
+  var raw = (t - lastT) / 1000;
+  lastT = t;
+  if (raw < 0 || raw > 0.1) { raw = smoothDt; }
+  smoothDt += (raw - smoothDt) * 0.25;
+  var rdt = Math.min(0.05, smoothDt);
+  if (warmup > 0) { warmup -= raw; }
+  if (!G.paused) {
+    try {
+      if (warmup <= 0) { telemetry(raw); }
+      update(rdt);
+      updateCamera(rdt);
+      render();
+    } catch (err) {
+      /* never let one bad frame kill the loop on fragile legacy engines */
+      errCount++; if (errCount < 5 && window.console && window.console.error) { window.console.error(err && err.stack ? err.stack : err); }
+    }
+  }
+  nextFrame(frame);
+}
+function boot() {
+  genWorld();
+  load();
+  var i;
+  for (i = 0; i < 18; i++) { spawnTraffic(true); }
+  for (i = 0; i < 20; i++) { var s = sidewalkPoint(); peds.push(new Ped(s.x, s.y)); }
+  /* a parked getaway car next to the safehouse */
+  var gc = new Car('sport', LOC.home.x + 20, LOC.home.y - 40, -PI / 2); gc.ai = 'none'; cars.push(gc);
+  player.x = LOC.home.x - 20; player.y = LOC.home.y;
+  cam.x = player.x; cam.y = player.y;
+  resize();
+  on(window, 'resize', resize); on(window, 'orientationchange', function () { window.setTimeout(resize, 200); });
+  on(document, 'keydown', onKeyDown); on(document, 'keyup', onKeyUp);
+  on(canvas, 'mousedown', function (e) { var p = mouseXY(e); mouse.x = p.x; mouse.y = p.y; usingTouch = false; if (!pointerPress(p.x, p.y, false)) { mouse.down = true; mouse.hit = true; } });
+  on(document, 'mouseup', function () { mouse.down = false; });
+  on(canvas, 'mousemove', function (e) { var p = mouseXY(e); mouse.x = p.x; mouse.y = p.y; mouse.moved = G.t; if (G.wheel) { G.wheelSel = wheelSlotAt(p.x, p.y); } });
+  on(canvas, 'contextmenu', function (e) { stop(e); });
+  var passive = { passive: false };
+  on(canvas, 'touchstart', onTouchStart, passive); on(canvas, 'touchmove', onTouchMove, passive);
+  on(canvas, 'touchend', onTouchEnd, passive); on(canvas, 'touchcancel', onTouchEnd, passive);
+  initHosts();
+  mpInit();
+  notify('ROSA', 'Welcome back to Coral Bay, ' + (player.ch === 0 ? 'me' : 'Dex') + '. Phone is on P. Do not get us killed.');
+  lastT = clock();
+  nextFrame(frame);
+}
+boot();
+})();
+</script>
+</body>
+</html>

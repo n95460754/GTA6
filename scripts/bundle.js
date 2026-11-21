@@ -15,6 +15,8 @@ function bundle() {
   fs.mkdirSync(path.join(ROOT, 'app'), { recursive: true });
   var out = path.join(ROOT, 'app', 'index.html');
   fs.writeFileSync(out, html);
+  /* playable single-file copy in the repo root: download it, open it in any browser */
+  fs.writeFileSync(path.join(ROOT, 'NeonTide.html'), html);
   return { file: out, modules: order.length, bytes: Buffer.byteLength(html) };
 }
 module.exports = bundle;

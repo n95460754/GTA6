@@ -3,6 +3,8 @@
 Original neon open-world crime sandbox: strict ES5, Canvas 2D only, no assets, no libraries. Native apps for **Windows, Linux and Android**.
 
 ## Download & play
+**Fastest:** download [`NeonTide.html`](NeonTide.html) and open it in any browser (PC, phone, PS4/PS5). It is the whole game in one file.
+
 | Platform | File (in [`releases/`](releases/)) | How |
 |---|---|---|
 | Windows 10/11 x64 | `NeonTide-windows-x64.7z` | unpack with 7-Zip, run `Neon Tide.exe` |

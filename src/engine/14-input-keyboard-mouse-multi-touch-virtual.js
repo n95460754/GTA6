@@ -45,6 +45,12 @@ function pointerPress(x, y, isTouch) {
   if (G.phone && x > phoneRect.x && y > phoneRect.y && x < phoneRect.x + phoneRect.w && y < phoneRect.y + phoneRect.h) { return true; }
   return false;
 }
+/* Is (x,y) on a virtual control? Touches elsewhere drag the 3D camera. */
+function onControl(x, y) {
+  if (dist(x, y, TB.dpad.x, TB.dpad.y) < TB.dpad.r * 1.6) { return true; }
+  var k; for (k in TB) { if (TB.hasOwnProperty(k) && k !== 'dpad' && inCircle(x, y, TB[k], 1.35)) { return true; } }
+  return false;
+}
 function touchXY(t) {
   var r = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
   return { x: t.clientX - r.left, y: t.clientY - r.top };
@@ -54,7 +60,7 @@ function onTouchStart(e) {
   var ch = e.changedTouches, i;
   for (i = 0; i < ch.length; i++) {
     var p = touchXY(ch[i]);
-    if (!pointerPress(p.x, p.y, true)) { touches.push({ id: ch[i].identifier, x: p.x, y: p.y, fresh: true }); }
+    if (!pointerPress(p.x, p.y, true)) { touches.push({ id: ch[i].identifier, x: p.x, y: p.y, fresh: true, look: gfx.p3d && !onControl(p.x, p.y) }); }
   }
   if (e.preventDefault) { e.preventDefault(); }
 }
@@ -62,7 +68,11 @@ function onTouchMove(e) {
   var ch = e.changedTouches, i, j;
   for (i = 0; i < ch.length; i++) {
     for (j = 0; j < touches.length; j++) {
-      if (touches[j].id === ch[i].identifier) { var p = touchXY(ch[i]); touches[j].x = p.x; touches[j].y = p.y; }
+      if (touches[j].id === ch[i].identifier) {
+        var p = touchXY(ch[i]);
+        if (touches[j].look) { lookDrag(p.x - touches[j].x, p.y - touches[j].y); }
+        touches[j].x = p.x; touches[j].y = p.y;
+      }
     }
     if (G.wheel) { var q = touchXY(ch[i]); G.wheelSel = wheelSlotAt(q.x, q.y); }
   }
@@ -80,6 +90,7 @@ function touchState() {
   var s = { up: false, down: false, left: false, right: false, fire: false, fireHit: false, gas: false, brake: false }, i, t;
   for (i = 0; i < touches.length; i++) {
     t = touches[i];
+    if (t.look) { continue; }
     var dx = t.x - TB.dpad.x, dy = t.y - TB.dpad.y, dd = Math.sqrt(dx * dx + dy * dy);
     if (dd < TB.dpad.r * 1.5 && dd > TB.dpad.r * 0.18) {
       if (dx < -dd * 0.38) { s.left = true; } if (dx > dd * 0.38) { s.right = true; }

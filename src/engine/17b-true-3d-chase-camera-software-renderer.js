@@ -9,7 +9,7 @@
      4. painter's algorithm: ground layer first, then objects far->near
    No WebGL: runs on the same CPU-only Canvas 2D path as the 2D pipes.
    ===================================================================== */
-var C3 = { x: 0, y: 0, z: 60, yaw: 0, pitch: 0.2, f: 500, near: 4, far: 1700, ready: false,
+var C3 = { x: 0, y: 0, z: 60, yaw: 0, pitch: 0.2, f: 500, near: 4, far: 1700, ready: false, look: 0, lookP: 0, lookT: -10,
   cy: 1, sy: 0, cp: 1, sp: 0, hz: 0 };
 var r3objs = [], r3night = 0, r3fog = [40, 20, 70], r3sun = 1;
 var colorCache = {};
@@ -34,9 +34,26 @@ function shadeCol(rgb, light, d, alpha) {
 }
 
 /* ---- camera ---- */
+/* Free look: touch-drag / right-mouse-drag orbits the camera around the hero. */
+function lookDrag(dx, dy) {
+  C3.look = wrapA(C3.look + dx * 0.0085);
+  C3.lookP = clamp(C3.lookP - dy * 0.004, -0.14, 0.55);
+  C3.lookT = G.t;
+}
 function updateCamera3D(dt) {
   var c = player.car, P = playerPos(), head = c ? c.a : player.a;
-  var k = 1 - Math.exp(-dt * (c ? 3.5 : 5));
+  var moving = c ? Math.abs(c.v) > 25 : (Math.abs(player.vx) + Math.abs(player.vy) > 20);
+  if (G.t - C3.lookT > 1.4 && moving) {                 /* drift back behind the hero */
+    if (c) { C3.look *= Math.exp(-dt * 2.2); }
+    C3.lookP *= Math.exp(-dt * 1.5);
+  }
+  if (!c && moving && Math.abs(C3.look) > 0.005) {      /* on foot: walk where the camera looks */
+    var tr = C3.look * (1 - Math.exp(-dt * 7));
+    player.a = wrapA(player.a + tr); C3.look -= tr; head = player.a;
+  }
+  head = wrapA(head + C3.look);
+  var k = 1 - Math.exp(-dt * (c ? 3.5 : 6));
+  if (G.t - C3.lookT < 0.15) { k = 1 - Math.exp(-dt * 18); }
   if (!C3.ready) { C3.yaw = head; }
   C3.yaw = wrapA(C3.yaw + wrapA(head - C3.yaw) * k);
   var dist3 = c ? (c.type === 'tank' ? 175 : 125) + Math.min(70, Math.abs(c.v) * 0.12) : 78;
@@ -48,13 +65,15 @@ function updateCamera3D(dt) {
   var kp = 1 - Math.exp(-dt * 9);
   if (!C3.ready) { C3.x = tx; C3.y = ty; C3.ready = true; } else { C3.x += (tx - C3.x) * kp; C3.y += (ty - C3.y) * kp; }
   C3.z += ((h + (c ? c.z * 0.8 : 0)) - C3.z) * kp;
-  C3.pitch = c ? 0.19 : 0.17;
+  C3.pitch = (c ? 0.19 : 0.17) + C3.lookP;
+  /* speed sense: widen the lens as the car goes faster */
+  C3.speedK = c ? clamp(Math.abs(c.v) / 700, 0, 0.22) : 0;
 }
 function camBasis() {
   var sh = G.shake > 0 ? G.shake * 0.02 : 0;
   var yaw = C3.yaw + (sh ? rnd(-sh, sh) : 0), pit = C3.pitch + (sh ? rnd(-sh, sh) : 0);
   C3.cy = Math.cos(yaw); C3.sy = Math.sin(yaw); C3.cp = Math.cos(pit); C3.sp = Math.sin(pit);
-  C3.f = Math.max(VW * 0.62, VH * 0.75);
+  C3.f = Math.max(VW * 0.62, VH * 0.75) * (1 - (C3.speedK || 0));
   C3.far = gfx.fps && gfx.fps < 40 ? 1200 : 1700;
   C3.hz = VH * 0.5 - C3.f * Math.tan(pit);       // screen y of the horizon
 }
@@ -134,15 +153,27 @@ function box(o, cx, cy, a, hl, hw, z0, z1, col, opts) {
     var s = projPoly([X[i], Y[i], z0, X[j], Y[j], z0, X[j], Y[j], z1, X[i], Y[i], z1]);
     if (!s) { continue; }
     var face = { s: s, c: shadeCol(rgb, light, d, alpha), st: null };
-    if (opts && opts.floors && d < 900 && z1 - z0 > 60) {            // neon floor bands / windows
-      face.lines = []; var fl = Math.min(9, Math.floor((z1 - z0) / 36)), k;
+    if (opts && opts.floors && d < 900 && z1 - z0 > 30) {            // window grid: floors + mullions
+      face.lines = []; var fl = Math.min(12, Math.floor((z1 - z0) / 18)), k;
       for (k = 1; k <= fl; k++) {
         var zz = z0 + (z1 - z0) * k / (fl + 1), p1 = w2s3(X[i], Y[i], zz), p2 = w2s3(X[j], Y[j], zz);
         if (p1 && p2) { face.lines.push(p1.x, p1.y, p2.x, p2.y); }
       }
-      face.lc = opts.neon || 'rgba(255,230,170,0.55)';
+      if (d < 650) {
+        var fw = Math.sqrt((X[j] - X[i]) * (X[j] - X[i]) + (Y[j] - Y[i]) * (Y[j] - Y[i])), cols = Math.min(10, Math.floor(fw / 16));
+        for (k = 1; k < cols; k++) {
+          var tt = k / cols, wx = X[i] + (X[j] - X[i]) * tt, wy = Y[i] + (Y[j] - Y[i]) * tt;
+          var q1 = w2s3(wx, wy, z0 + 8), q2 = w2s3(wx, wy, z1 - 4);
+          if (q1 && q2) { face.lines.push(q1.x, q1.y, q2.x, q2.y); }
+        }
+      }
+      face.lc = opts.neon || 'rgba(255,230,170,0.6)';
     }
     o.p.push(face);
+    if (d < 900 && z1 - z0 > 10 && !alpha) {                          // ambient occlusion at the foot of walls
+      var ao = projPoly([X[i], Y[i], z0, X[j], Y[j], z0, X[j], Y[j], z0 + Math.min(9, (z1 - z0) * 0.3), X[i], Y[i], z0 + Math.min(9, (z1 - z0) * 0.3)]);
+      if (ao) { o.p.push({ s: ao, c: 'rgba(0,0,0,0.28)' }); }
+    }
   }
   if (C3.z > z1) {                                                     // roof
     var r = projPoly([X[0], Y[0], z1, X[1], Y[1], z1, X[2], Y[2], z1, X[3], Y[3], z1]);
@@ -170,13 +201,26 @@ function car3D(c, P) {
   var o = newObj(c.x, c.y, c.z + 8), T = CAR_TYPES[c.type] || CAR_TYPES.sedan;
   var hl = c.w / 2, hw = c.h / 2, z = c.z, col = c.dead ? '#2a2422' : c.color, blink = Math.floor(G.t * 8) % 2;
   if (c.type === 'tank') {
-    box(o, c.x, c.y, c.a, hl, hw, z, z + 14, c.dead ? '#2a2a2a' : col, null);
+    shadow3D(o, c.x, c.y, c.a, hl + 2, hw + 2, 20);
+    box(o, c.x, c.y, c.a, hl, hw * 0.75, z + 4, z + 14, c.dead ? '#2a2a2a' : col, null);
+    box(o, c.x, c.y + 0, c.a, hl + 2, hw, z, z + 7, '#20201a', null);
     box(o, c.x, c.y, c.turretA, 14, 12, z + 14, z + 24, c.dead ? '#222' : '#4a5530', null);
     box(o, c.x + Math.cos(c.turretA) * 30, c.y + Math.sin(c.turretA) * 30, c.turretA, 18, 2.5, z + 17, z + 21, '#2b2b22', null);
     return o;
   }
-  var bodyH = c.type === 'fbi' ? 15 : 11;
-  box(o, c.x, c.y, c.a, hl, hw, z + 2, z + bodyH, col, null);
+  var bodyH = c.type === 'fbi' ? 15 : 11, ca = Math.cos(c.a), sa = Math.sin(c.a), wi, wsx, wsy;
+  shadow3D(o, c.x, c.y, c.a, hl + 2, hw + 2, 10 + c.z);
+  for (wi = 0; wi < 4; wi++) {                                       /* wheels */
+    wsx = (wi < 2 ? 1 : -1) * hl * 0.62; wsy = (wi % 2 ? 1 : -1) * hw * 0.92;
+    box(o, c.x + ca * wsx - sa * wsy, c.y + sa * wsx + ca * wsy, c.a, 4, 2.2, z, z + 7, '#111114', null);
+  }
+  box(o, c.x, c.y, c.a, hl, hw, z + 4, z + bodyH, col, null);
+  if (!c.dead) {                                                      /* head & tail lights */
+    box(o, c.x + ca * (hl + 0.5) - sa * hw * 0.6, c.y + sa * (hl + 0.5) + ca * hw * 0.6, c.a, 0.8, 2.4, z + 6, z + 9, '#fff6c0', null);
+    box(o, c.x + ca * (hl + 0.5) + sa * hw * 0.6, c.y + sa * (hl + 0.5) - ca * hw * 0.6, c.a, 0.8, 2.4, z + 6, z + 9, '#fff6c0', null);
+    box(o, c.x - ca * (hl + 0.5) - sa * hw * 0.6, c.y - sa * (hl + 0.5) + ca * hw * 0.6, c.a, 0.8, 2.4, z + 6, z + 9, '#ff2040', null);
+    box(o, c.x - ca * (hl + 0.5) + sa * hw * 0.6, c.y - sa * (hl + 0.5) - ca * hw * 0.6, c.a, 0.8, 2.4, z + 6, z + 9, '#ff2040', null);
+  }
   /* cabin + glass */
   box(o, c.x - Math.cos(c.a) * hl * 0.12, c.y - Math.sin(c.a) * hl * 0.12, c.a, hl * 0.5, hw * 0.86, z + bodyH, z + bodyH + 8,
     c.dead ? '#111' : '#28466e', { roof: c.dead ? '#222' : col });
@@ -185,7 +229,7 @@ function car3D(c, P) {
   }
   if (!c.dead && r3night > 0.35) {   /* headlight glow */
     var h = w2s3(c.x + Math.cos(c.a) * (hl + 2), c.y + Math.sin(c.a) * (hl + 2), z + 6);
-    if (h) { o.circ = { x: h.x, y: h.y, r: Math.max(2, 900 / h.d), c: '#fff6c0', a: 0.55 }; }
+    if (h) { o.circ = { x: h.x, y: h.y, r: clamp(900 / h.d, 2, 18), c: '#fff6c0', a: 0.55 }; }
   }
   return o;
 }
@@ -196,8 +240,12 @@ function ped3D(x, y, a, skin, shirt, dead, weap) {
     if (s) { od.p.push({ s: s, c: 'rgba(150,10,30,0.8)' }); }
     return;
   }
-  var o = newObj(x, y, 10), sw = Math.sin(G.t * 10 + x) * 1.5;
-  box(o, x, y, a, 2.2, 3.4, 0, 7, '#1d1d28', null);                 // legs
+  var o = newObj(x, y, 10), sw = Math.sin(G.t * 10 + x) * 1.5, ca = Math.cos(a), sa = Math.sin(a);
+  shadow3D(o, x, y, a, 3.5, 4.5, 18);
+  box(o, x + ca * sw * 0.4 - sa * 1.6, y + sa * sw * 0.4 + ca * 1.6, a, 1.6, 1.4, 0, 7, '#1d1d28', null);   // legs
+  box(o, x - ca * sw * 0.4 + sa * 1.6, y - sa * sw * 0.4 - ca * 1.6, a, 1.6, 1.4, 0, 7, '#1d1d28', null);
+  box(o, x - sa * 5 + ca * sw * -0.5, y + ca * 5 + sa * sw * -0.5, a, 1.3, 1.2, 8, 14.5, skin, null);  // arms
+  box(o, x + sa * 5 + ca * sw * 0.5, y - ca * 5 + sa * sw * 0.5, a, 1.3, 1.2, 8, 14.5, skin, null);
   box(o, x + Math.cos(a) * sw * 0.2, y + Math.sin(a) * sw * 0.2, a, 2.6, 4, 7, 15, shirt, null);   // torso
   box(o, x, y, a, 2.2, 2.2, 15, 19.5, skin, { roof: '#2a1a10' });  // head + hair
   if (weap) { box(o, x + Math.cos(a) * 5, y + Math.sin(a) * 5, a, weap === 3 ? 8 : 4, 1, 10, 12, '#111', null); }
@@ -215,6 +263,45 @@ function palm3D(p) {
   }
 }
 
+/* soft contact shadow cast away from the sun (south-west), fades at night */
+function shadow3D(o, x, y, a, hl, hw, h) {
+  if (o.d > 900) { return; }
+  var off = h * 0.35 * (1 - r3night), sx = x - off * 0.7, sy = y + off * 0.5, ca = Math.cos(a), sa = Math.sin(a);
+  var s = projPoly([sx + ca * hl - sa * hw, sy + sa * hl + ca * hw, 0.3, sx + ca * hl + sa * hw, sy + sa * hl - ca * hw, 0.3,
+    sx - ca * hl + sa * hw, sy - sa * hl - ca * hw, 0.3, sx - ca * hl - sa * hw, sy - sa * hl + ca * hw, 0.3]);
+  if (s) { o.p.push({ s: s, c: 'rgba(0,0,0,' + (0.35 - r3night * 0.2).toFixed(2) + ')' }); }
+}
+/* building shadows on the ground: convex hull of footprint + sun-shifted footprint */
+function buildingShadow(b) {
+  var sx = -b.ht * 0.32, sy = b.ht * 0.22, x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h;
+  var s = projPoly([x0, y0, 0.2, x1, y0, 0.2, x1, y1, 0.2, x1 + sx, y1 + sy, 0.2, x0 + sx, y1 + sy, 0.2, x0 + sx, y0 + sy, 0.2]);
+  if (s) { fillPoly(s, 'rgba(10,0,30,' + (0.32 - r3night * 0.22).toFixed(2) + ')'); }
+}
+/* street lamps on every block corner near the camera */
+function lamps3D() {
+  var bx, by, k, cx0 = Math.floor(C3.x / CELL), cy0 = Math.floor(C3.y / CELL);
+  for (by = cy0 - 2; by <= cy0 + 2; by++) {
+    for (bx = cx0 - 2; bx <= cx0 + 2; bx++) {
+      if (bx < 0 || by < 0 || bx >= NB || by >= NB) { continue; }
+      for (k = 0; k < 4; k++) {
+        var lx = bx * CELL + (k % 2 ? CELL - 48 : 48), ly = by * CELL + (k < 2 ? 48 : CELL - 48);
+        if (Math.abs(lx - C3.x) > 800 || Math.abs(ly - C3.y) > 800) { continue; }
+        toCam(lx, ly, 0, tmpC); if (tmpC[2] < 0 || dist(lx, ly, C3.x, C3.y) < 70) { continue; }
+        var o = newObj(lx, ly, 30);
+        box(o, lx, ly, 0, 1.2, 1.2, 0, 52, '#3a3a44', null);
+        box(o, lx, ly, 0, 4, 4, 52, 55, '#55556a', null);
+        if (r3night > 0.3) {
+          var g = w2s3(lx, ly, 50);
+          if (g) { o.circ = { x: g.x, y: g.y, r: clamp(1800 / g.d, 2, 26), c: '#ffd27a', a: 0.35 + r3night * 0.35 }; }
+        }
+      }
+    }
+  }
+}
+var CLOUDS = [], STARS = [];
+(function () { var i; for (i = 0; i < 9; i++) { CLOUDS.push({ a: i * 0.7, h: 0.05 + (i % 3) * 0.04, w: 0.12 + (i % 4) * 0.05 }); }
+  for (i = 0; i < 70; i++) { STARS.push({ a: (i * 2.399) % PI2, h: 0.05 + ((i * 7) % 40) / 80 }); } })();
+
 /* ---- sky ---- */
 function sky3D() {
   var hz = clamp(C3.hz, -VH, VH * 2), dk = r3night;
@@ -225,6 +312,22 @@ function sky3D() {
   /* the sun / moon on the horizon, fixed to the west */
   var sp = w2s3(C3.x - 100000, C3.y + 20000, 9000);
   if (sp) { ctx.fillStyle = dk > 0.5 ? 'rgba(230,230,255,0.85)' : 'rgba(255,240,180,0.9)'; ctx.beginPath(); ctx.arc(sp.x, sp.y, VH * 0.06, 0, PI2, false); ctx.fill(); }
+  /* stars at night, drifting clouds by day (placed on the sky dome by yaw) */
+  var i, sxp, fovW = VW / C3.f;
+  if (dk > 0.45) {
+    ctx.fillStyle = 'rgba(255,255,255,' + ((dk - 0.45) * 1.6).toFixed(2) + ')';
+    for (i = 0; i < STARS.length; i++) {
+      sxp = wrapA(STARS[i].a - C3.yaw); if (Math.abs(sxp) > 1.2) { continue; }
+      ctx.fillRect(VW / 2 + Math.tan(sxp) * C3.f, hz - STARS[i].h * VH * 1.4, 1.5, 1.5);
+    }
+  }
+  ctx.fillStyle = 'rgba(255,235,245,' + (0.35 - dk * 0.25).toFixed(2) + ')';
+  for (i = 0; i < CLOUDS.length; i++) {
+    var cl = CLOUDS[i]; sxp = wrapA(cl.a + G.t * 0.004 - C3.yaw); if (Math.abs(sxp) > 1.2) { continue; }
+    var ccx = VW / 2 + Math.tan(sxp) * C3.f, ccy = hz - cl.h * VH * 1.6, cw = cl.w * VW;
+    ctx.beginPath(); ctx.arc(ccx, ccy, cw * 0.18, 0, PI2, false); ctx.arc(ccx + cw * 0.18, ccy + 4, cw * 0.14, 0, PI2, false);
+    ctx.arc(ccx - cw * 0.2, ccy + 5, cw * 0.12, 0, PI2, false); ctx.fill();
+  }
   ctx.fillStyle = 'rgb(' + r3fog[0] + ',' + r3fog[1] + ',' + r3fog[2] + ')';
   ctx.fillRect(0, Math.max(0, hz), VW, VH - Math.max(0, hz));
 }
@@ -269,8 +372,13 @@ function renderWorld3D() {
     e = spikes[i];
     if (e.horiz) { gRect(e.x - 4, e.y - 36, e.x + 4, e.y + 36, rgbOf('#b0b0b0'), 1, 0.5); } else { gRect(e.x - 36, e.y - 4, e.x + 36, e.y + 4, rgbOf('#b0b0b0'), 1, 0.5); }
   }
+  for (i = 0; i < buildings.length; i++) {
+    e = buildings[i];
+    if (Math.abs(e.x + e.w / 2 - C3.x) < 900 && Math.abs(e.y + e.h / 2 - C3.y) < 900) { buildingShadow(e); }
+  }
   /* ---- solids ---- */
   r3objs.length = 0;
+  lamps3D();
   for (i = 0; i < buildings.length; i++) {
     e = buildings[i];
     var cxb = e.x + e.w / 2, cyb = e.y + e.h / 2;
@@ -279,7 +387,7 @@ function renderWorld3D() {
     var bo = newObj(cxb, cyb, Math.min(e.ht, 120) * 0.5);
     box(bo, cxb, cyb, 0, e.w / 2, e.h / 2, 0, e.ht, e.c, { roof: e.roof, neon: e.neon, floors: true });
   }
-  for (i = 0; i < palms.length; i++) { e = palms[i]; if (Math.abs(e.x - C3.x) < R * 0.7 && Math.abs(e.y - C3.y) < R * 0.7) { toCam(e.x, e.y, 0, tmpC); if (tmpC[2] > -30) { palm3D(e); } } }
+  for (i = 0; i < palms.length; i++) { e = palms[i]; if (Math.abs(e.x - C3.x) < R * 0.7 && Math.abs(e.y - C3.y) < R * 0.7) { toCam(e.x, e.y, 0, tmpC); if (tmpC[2] > -30 && dist(e.x, e.y, C3.x, C3.y) > 45) { palm3D(e); } } }
   for (i = 0; i < cars.length; i++) { e = cars[i]; if (Math.abs(e.x - C3.x) < R && Math.abs(e.y - C3.y) < R) { toCam(e.x, e.y, 0, tmpC); if (tmpC[2] > -40) { car3D(e); } } }
   for (i = 0; i < peds.length; i++) { e = peds[i]; if (Math.abs(e.x - C3.x) < 1000 && Math.abs(e.y - C3.y) < 1000) { toCam(e.x, e.y, 0, tmpC); if (tmpC[2] > -20) { ped3D(e.x, e.y, e.a, e.color, e.shirt, e.dead, 0); } } }
   if (!player.car) { ped3D(player.x, player.y, player.a, '#c68642', CHARS[player.ch].color, false, player.weap); }

@@ -40,9 +40,17 @@ function boot() {
   resize();
   on(window, 'resize', resize); on(window, 'orientationchange', function () { window.setTimeout(resize, 200); });
   on(document, 'keydown', onKeyDown); on(document, 'keyup', onKeyUp);
-  on(canvas, 'mousedown', function (e) { var p = mouseXY(e); mouse.x = p.x; mouse.y = p.y; usingTouch = false; if (!pointerPress(p.x, p.y, false)) { mouse.down = true; mouse.hit = true; } });
-  on(document, 'mouseup', function () { mouse.down = false; });
-  on(canvas, 'mousemove', function (e) { var p = mouseXY(e); mouse.x = p.x; mouse.y = p.y; mouse.moved = G.t; if (G.wheel) { G.wheelSel = wheelSlotAt(p.x, p.y); } });
+  on(canvas, 'mousedown', function (e) {
+    var p = mouseXY(e); mouse.x = p.x; mouse.y = p.y; usingTouch = false;
+    if (e.button === 2 || e.button === 1) { mouse.look = true; return; }      /* right/middle drag = look around */
+    if (!pointerPress(p.x, p.y, false)) { mouse.down = true; mouse.hit = true; }
+  });
+  on(document, 'mouseup', function () { mouse.down = false; mouse.look = false; });
+  on(canvas, 'mousemove', function (e) {
+    var p = mouseXY(e);
+    if (mouse.look && gfx.p3d) { lookDrag(p.x - mouse.x, p.y - mouse.y); }
+    mouse.x = p.x; mouse.y = p.y; mouse.moved = G.t; if (G.wheel) { G.wheelSel = wheelSlotAt(p.x, p.y); }
+  });
   on(canvas, 'contextmenu', function (e) { stop(e); });
   var passive = { passive: false };
   on(canvas, 'touchstart', onTouchStart, passive); on(canvas, 'touchmove', onTouchMove, passive);

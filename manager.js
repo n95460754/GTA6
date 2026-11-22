@@ -129,6 +129,10 @@ function dryRun(src, frames) {
   };
   sandbox.window.navigator = sandbox.navigator;
   vm.createContext(sandbox);
+  /* measure RETAINED memory: force a full GC before both samples so short-lived
+     per-frame garbage (3D polygon lists) does not count against the budget */
+  var gcNow = (function () { try { require('v8').setFlagsFromString('--expose-gc'); return vm.runInNewContext('gc'); } catch (e) { return function () {}; } })();
+  gcNow(); gcNow();
   var heap0 = process.memoryUsage().heapUsed;
   vm.runInContext(src, sandbox, { filename: 'index.html#script', timeout: 10000 });
   var api = env.win.NeonTide;
@@ -162,6 +166,7 @@ function dryRun(src, frames) {
   api.setGraphics('persp'); step(30); report.push(['2.5D perspective pipe renders', api.state().pipe === 'PERSP-2.5D']);
   api.setGraphics('3d'); step(120); report.push(['true 3D chase-camera pipe renders', api.state().pipe === '3D']);
   step(frames || 1200);
+  gcNow(); gcNow();
   var heap = (process.memoryUsage().heapUsed - heap0) / 1048576;
   report.push(['ran ' + (frames || 1200) + ' extra frames, ' + env.ctxCalls.n + ' draw calls', true]);
   report.push(['heap growth ' + heap.toFixed(1) + ' MB (< 16 MB budget)', heap < 16]);

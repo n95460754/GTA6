@@ -79,7 +79,7 @@ node manager.js --build --only=win,linux
 
 - **Tests:** ✅ 16 passed, 0 failed
 - **Engine:** 26 modules, 2792 lines of strict ES5
-- **Updated:** 2026-11-24 22:45 UTC
+- **Updated:** 2026-11-25 09:07 UTC
 
 ### Release files
 | File | Size |

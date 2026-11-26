@@ -2256,6 +2256,7 @@ function sky3D() {
   ctx.fillRect(0, 0, VW, Math.max(0, hz + 4));
   /* the sun / moon on the horizon, fixed to the west */
   var sp = w2s3(C3.x - 100000, C3.y + 20000, 9000);
+  C3.sunOn = !!sp; if (sp) { C3.sunX = sp.x; C3.sunY = sp.y; }
   if (sp) { ctx.fillStyle = dk > 0.5 ? 'rgba(230,230,255,0.85)' : 'rgba(255,240,180,0.9)'; ctx.beginPath(); ctx.arc(sp.x, sp.y, VH * 0.06, 0, PI2, false); ctx.fill(); }
   /* stars at night, drifting clouds by day (placed on the sky dome by yaw) */
   var i, sxp, fovW = VW / C3.f;
@@ -2364,11 +2365,48 @@ function renderWorld3D() {
     e = tracers[i]; var t1 = w2s3(e.x1, e.y1, 11), t2 = w2s3(e.x2, e.y2, 11);
     if (t1 && t2) { ctx.strokeStyle = e.c; ctx.globalAlpha = Math.min(1, e.t * 14); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y); ctx.stroke(); ctx.globalAlpha = 1; }
   }
+  cine3D();
   /* crosshair where the gun points */
   if (!player.car || player.weap > 0) {
     var ax = player.car ? player.car.a : player.aim, cpos = player.car || player;
     var ch = w2s3(cpos.x + Math.cos(ax) * 220, cpos.y + Math.sin(ax) * 220, 12);
     if (ch) { ctx.strokeStyle = 'rgba(255,63,164,0.85)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ch.x, ch.y, 7, 0, PI2, false); ctx.moveTo(ch.x - 11, ch.y); ctx.lineTo(ch.x - 4, ch.y); ctx.moveTo(ch.x + 4, ch.y); ctx.lineTo(ch.x + 11, ch.y); ctx.stroke(); }
+  }
+}
+
+/* ---- cinematic look: golden-hour sun bloom, colour grade, vignette, opening title ----
+   Original art direction (Palmetto County neon + Gulf sunsets); skipped on low-end pipes. */
+function cine3D() {
+  if (gfx.low || !ctx.createRadialGradient || !ctx.createLinearGradient) { return; }
+  var dk = r3night, g, day = 1 - dk, R0 = Math.max(VW, VH);
+  if (C3.sunOn && day > 0.35) {
+    g = ctx.createRadialGradient(C3.sunX, C3.sunY, 0, C3.sunX, C3.sunY, R0 * 0.75);
+    g.addColorStop(0, 'rgba(255,214,150,' + (0.42 * day).toFixed(2) + ')');
+    g.addColorStop(0.3, 'rgba(255,130,110,' + (0.16 * day).toFixed(2) + ')');
+    g.addColorStop(1, 'rgba(255,110,140,0)');
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH); ctx.globalCompositeOperation = 'source-over';
+  }
+  g = ctx.createLinearGradient(0, 0, 0, VH);
+  if (dk > 0.5) { g.addColorStop(0, 'rgba(0,60,120,0.14)'); g.addColorStop(1, 'rgba(140,0,140,0.12)'); }
+  else { g.addColorStop(0, 'rgba(255,120,60,0.10)'); g.addColorStop(1, 'rgba(60,0,90,0.14)'); }
+  ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
+  g = ctx.createRadialGradient(VW / 2, VH * 0.55, R0 * 0.32, VW / 2, VH * 0.55, R0 * 0.78);
+  g.addColorStop(0, 'rgba(10,0,20,0)'); g.addColorStop(1, 'rgba(10,0,20,0.55)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
+  /* opening title card with letterbox bars that slide away */
+  var t = G.t;
+  if (t < 6) {
+    var bar = VH * 0.12 * clamp((6 - t) / 1.5, 0, 1), al = clamp(t < 1 ? t : (5 - t) / 1.5, 0, 1);
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, VW, bar); ctx.fillRect(0, VH - bar, VW, bar);
+    if (al > 0) {
+      ctx.globalAlpha = al; ctx.textAlign = 'center';
+      ctx.font = 'bold ' + Math.round(VH * 0.11) + 'px Impact, Arial Black, sans-serif';
+      ctx.fillStyle = '#ff3fa4'; ctx.fillText('NEON TIDE', VW / 2 + 3, VH * 0.42 + 3);
+      ctx.fillStyle = '#fff6e8'; ctx.fillText('NEON TIDE', VW / 2, VH * 0.42);
+      ctx.font = Math.round(VH * 0.035) + 'px Arial, sans-serif'; ctx.fillStyle = '#ffd08a';
+      ctx.fillText('PALMETTO COUNTY  \u2022  ROSA & DEX', VW / 2, VH * 0.5);
+      ctx.globalAlpha = 1; ctx.textAlign = 'left';
+    }
   }
 }
 
